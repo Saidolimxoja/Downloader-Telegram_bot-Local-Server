@@ -18,9 +18,9 @@
 ## 🛠️ Технологии
 
 - **NestJS** — фреймворк
-- **Grammy** — Telegram Bot API
+- **Nestjs-telegraf** — Telegram Bot API
 - **Prisma** — ORM для PostgreSQL
-- **telegram** (MTProto) — загрузка больших файлов
+- **telegram-local-server**  — загрузка больших файлов до 2 ГБ 
 - **yt-dlp** — скачивание медиа
 - **ffmpeg** — обработка видео
 
@@ -34,7 +34,7 @@
 - PostgreSQL 15+
 - yt-dlp
 - ffmpeg
-
+- [Telegram-local-server](https://github.com/tdlib/telegram-bot-api) 
 ### **1. Клонируй репозиторий**
 ```bash
 git clone https://github.com/Saidolimxoja/kingkong-bot.git
