@@ -30,15 +30,15 @@
 
 ### **Требования**
 
-- Node.js 18+
-- PostgreSQL 15+
-- yt-dlp
-- ffmpeg
-- [Telegram-local-server](https://github.com/tdlib/telegram-bot-api) 
+- [Node.js 19+](https://nodejs.org/en)
+- [PostgreSQL 15+](https://www.postgresql.org/)
+- [yt-dlp](https://www.ffmpeg.org/)
+- [ffmpeg](https://github.com/yt-dlp/yt-dlp)
+- [Telegram-local-server](https://github.com/tdlib/telegram-bot-api)
 ### **1. Клонируй репозиторий**
 ```bash
-git clone https://github.com/Saidolimxoja/kingkong-bot.git
-cd kingkong-bot
+git clone https://github.com/Saidolimxoja/Downloader-Telegram_bot-Local-Server.git
+cd Downloader-Telegram_bot-Local-Server.git
 ```
 
 ### **2. Установи зависимости**
@@ -57,19 +57,19 @@ cp .env.example .env
 BOT_TOKEN=your_bot_token_from_botfather
 YOUR_USERNAME=@your_bot_username
 
-# MTProto
+# local-server
 API_ID=12345678
 API_HASH=your_api_hash_from_my_telegram_org
-SESSION_STRING=your_session_string
+
 
 # Channels
-CHANNEL_ID=-1001234567890
+CHANNEL_ID=-1001234567890  для примера можешь получить через бот @userinfobot
 
 # Admin
-ADMIN_USER_ID=your_telegram_id
+ADMIN_USER_ID=your_telegram_id 
 
 # Database
-DATABASE_URL=postgresql://user:password@localhost:5432/kingkong_bot
+DATABASE_URL=postgresql://user:password@localhost:5432/your_DB_name
 
 # App
 NODE_ENV=development
@@ -87,7 +87,7 @@ MAX_QUEUE_SIZE=50
 ### **4. Настрой базу данных**
 ```bash
 # Создай БД
-createdb kingkong_bot
+createdb your_db
 
 # Примени миграции
 npx prisma migrate dev
@@ -96,12 +96,6 @@ npx prisma migrate dev
 npx prisma db seed
 ```
 
-### **5. Получи SESSION_STRING**
-```bash
-node scripts/get-session.js
-```
-
-Следуй инструкциям и скопируй `SESSION_STRING` в `.env`.
 
 ### **6. Запусти бота**
 ```bash
@@ -148,18 +142,13 @@ npx prisma db seed         # Заполнить тестовыми данным�
 # Линтинг
 npm run lint               # Проверка кода
 npm run lint:fix           # Исправление ошибок
-
-# Тесты
-npm run test               # Unit тесты
-npm run test:e2e           # E2E тесты
-npm run test:cov           # Coverage
 ```
 
 ---
 
 ## 📁 Структура проекта
 ```
-kingkong-bot/
+local-server/
 ├── prisma/
 │   ├── schema.prisma          # БД схема
 │   ├── migrations/            # Миграции
@@ -170,7 +159,9 @@ kingkong-bot/
 │   ├── app.module.ts          # Root модуль
 │   │
 │   ├── config/                # Конфигурация
-│   ├── common/                # Утилиты
+│   ├── common/
+│       ├── constansts/        # Константы
+│       ├── utils/             # Утилиты               
 │   ├── database/              # Prisma
 │   │
 │   └── modules/
@@ -181,11 +172,10 @@ kingkong-bot/
 │       ├── downloader/        # Скачивание
 │       ├── cache/             # Кеширование
 │       ├── uploader/          # Загрузка в TG
-│       ├── mtproto/           # MTProto клиент
+│       ├── ytdlp/           # MTProto клиент
 │       ├── advertisement/     # Реклама
 │       └── admin/             # Админка
-│
-├── scripts/                   # Утилиты
+│ 
 ├── .env                       # Переменные окружения
 ├── package.json
 └── README.md
@@ -202,12 +192,6 @@ kingkong-bot/
 /checkchannels
 ```
 
-### **Ошибка MTProto**
-
-Получи новый `SESSION_STRING`:
-```bash
-node scripts/get-session.js
-```
 
 ### **yt-dlp не работает**
 
