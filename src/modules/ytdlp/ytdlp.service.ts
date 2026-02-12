@@ -300,9 +300,9 @@ export class YtdlpService {
    */
   private sanitizeFilename(filename: string): string {
     return filename
-      .replace(/[<>:"/\\|?*]/g, '_') // Запрещенные символы
-      .replace(/\s+/g, '_') // Пробелы -> _
-      .substring(0, 100); // Макс 100 символов
+    .substring(0, 100); // Макс 100 символов
+      //.replace(/[<>:"/\\|?*]/g, '_') // Запрещенные символы
+      //.replace(/\s+/g, '_') // Пробелы -> _
   }
 
   /**
