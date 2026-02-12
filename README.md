@@ -17,16 +17,16 @@
 
 ## 🛠️ Технологии
 
-- **NestJS** — фреймворк
-- **Nestjs-telegraf** — Telegram Bot API
-- **Prisma** — ORM для PostgreSQL
-- **telegram-local-server**  — загрузка больших файлов до 2 ГБ 
-- **yt-dlp** — скачивание медиа
-- **ffmpeg** — обработка видео
+- **[NestJS](https://nestjs.com/)** — серверный фреймворк
+- **[Grammy](https://grammy.dev/)** — библиотека для Telegram Bot API
+- **[Prisma](https://www.prisma.io/)** — ORM для PostgreSQL
+- **[Telegram Bot API Server](https://github.com/tdlib/telegram-bot-api)** — локальный сервер для загрузки файлов до 2 ГБ
+- **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — движок скачивания медиа
+- **[ffmpeg](https://ffmpeg.org/)** — обработка видео и аудио
 
 ---
 
-## 📦 Установка
+## 📦 Установка и Запуск
 
 ### **Требования**
 
@@ -45,6 +45,49 @@ cd Downloader-Telegram_bot-Local-Server.git
 ```bash
 npm install
 ```
+
+## **3. Настройка Telegram Local Server**
+### Способ 1: Docker (Рекомендуемый) 
+
+Убедитесь, что у вас установлены Docker.
+Создайте папку для временных файлов: 
+```bash
+mkdir -p /tmp/bot_downloads
+```
+Запуск Контейнера
+```bash
+docker run -d \
+  -p 8081:8081 \
+  -e TELEGRAM_API_ID=ВАШ_API_ID \
+  -e TELEGRAM_API_HASH=ВАШ_API_HASH \
+  -v "$(pwd)/telegram-bot-api-data:/var/lib/telegram-bot-api" \
+  -v /tmp/bot_downloads:/tmp/bot_downloads \
+  --name=telegram-bot-api \
+  --restart=always \
+  aiogram/telegram-bot-api:latest \
+  --local \
+  --verbosity=2
+```
+После этого запуститься Локальный СЕРВЕР Телеграм
+Важно: Флаг -v /tmp/bot_downloads:/tmp/bot_downloads обязателен. Бот и Сервер должны иметь доступ к одной и той же папке для обмена файлами.
+### Способ 2: Без Docker (Нативный запуск)
+Требуется скомпилированный файл telegram-bot-api (инструкция по сборке здесь).
+Создайте рабочую директорию:
+```bash
+mkdir -p telegram-bot-api-data
+```
+Запустите сервер:
+```bash
+telegram-bot-api \
+    --api-id=ВАШ_API_ID \
+    --api-hash=ВАШ_API_HASH \
+    --http-port=8081 \
+    --dir=$(pwd)/telegram-bot-api-data \
+    --local \
+    --verbosity=2
+```
+
+---
 
 ### **3. Настрой .env**
 
@@ -105,47 +148,6 @@ npm run start:dev
 # Production
 npm run build
 npm run start:prod
-```
----
-### **Использование Telegram-local-server**
-## Способ 1: Docker (Рекомендуемый) 
-
-Убедитесь, что у вас установлены Docker.
-Создайте папку для временных файлов: 
-```bash
-mkdir -p /tmp/bot_downloads
-```
-Запуск Контейнера
-```bash
-docker run -d \
-  -p 8081:8081 \
-  -e TELEGRAM_API_ID=ВАШ_API_ID \
-  -e TELEGRAM_API_HASH=ВАШ_API_HASH \
-  -v "$(pwd)/telegram-bot-api-data:/var/lib/telegram-bot-api" \
-  -v /tmp/bot_downloads:/tmp/bot_downloads \
-  --name=telegram-bot-api \
-  --restart=always \
-  aiogram/telegram-bot-api:latest \
-  --local \
-  --verbosity=2
-```
-После этого запуститься Локальный СЕРВЕР Телеграм
-Важно: Флаг -v /tmp/bot_downloads:/tmp/bot_downloads обязателен. Бот и Сервер должны иметь доступ к одной и той же папке для обмена файлами.
-## Способ 2: Без Docker (Нативный запуск)
-Требуется скомпилированный файл telegram-bot-api (инструкция по сборке здесь).
-Создайте рабочую директорию:
-```bash
-mkdir -p telegram-bot-api-data
-```
-Запустите сервер:
-```bash
-telegram-bot-api \
-    --api-id=ВАШ_API_ID \
-    --api-hash=ВАШ_API_HASH \
-    --http-port=8081 \
-    --dir=$(pwd)/telegram-bot-api-data \
-    --local \
-    --verbosity=2
 ```
 ---
 
