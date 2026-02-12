@@ -263,7 +263,7 @@ Pull requests приветствуются!
 ## 📞 Поддержка
 
 - Telegram: [@KINGOLIMXOJA](https://t.me/KINGOLIMXOJA)
-- Issues: [GitHub Issues](https://github.com/yourusername/kingkong-bot/issues)
+- Issues: [GitHub Issues](https://github.com/Saidolimxoja/Downloader-Telegram_bot-Local-Server.git)
 
 ---
 
