@@ -1,59 +1,42 @@
-# ========================
-# BASE IMAGE
-# ========================
-FROM node:22-bullseye-slim
+# Используем Node 20 на базе Debian (Bookworm), так как там свежие пакеты
+FROM node:20-bookworm-slim
 
-# ========================
-# SYSTEM DEPENDENCIES
-# ========================
-RUN apt-get update && apt-get install -y python3 python3-venv python3-pip ffmpeg bash curl git
+# 1. Устанавливаем системные зависимости
+# python3-pip и ffmpeg обязательны для yt-dlp и обработки видео
+# openssl нужен для Prisma
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    ffmpeg \
+    openssl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# ========================
-# CREATE PYTHON VENV
-# ========================
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# 2. Устанавливаем yt-dlp через pip (так надежнее, чем apt)
+# Создаем виртуальное окружение для python, чтобы не ломать системный
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+RUN pip3 install --upgrade yt-dlp
 
-# ========================
-# INSTALL PYTHON PACKAGES
-# ========================
-RUN pip install --no-cache-dir --upgrade pip yt-dlp
-RUN which yt-dlp && yt-dlp --version
-# ========================
-# WORKDIR
-# ========================
+# 3. Настройка рабочей директории
 WORKDIR /app
 
-# ========================
-# COPY PROJECT FILES
-# ========================
+# 4. Копируем файлы зависимостей
 COPY package*.json ./
 COPY prisma ./prisma/
-COPY youtube_cookies.txt ./youtube_cookies.txt
-# ========================
-# INSTALL NODE DEPENDENCIES
-# ========================
-RUN npm ci
 
-# ========================
-# COPY REST OF PROJECT
-# ========================
+# 5. Устанавливаем Node-зависимости
+RUN npm install
+
+# 6. Генерируем клиент базы данных
+RUN npx prisma generate
+
+# 7. Копируем остальной код
 COPY . .
 
-# ========================
-# PRISMA GENERATE & BUILD
-# ========================
-RUN npx prisma generate
+# 8. Собираем проект
 RUN npm run build
 
-
-
-# ========================
-# EXPOSE PORT
-# ========================
-EXPOSE 3000
-
-# ========================
-# START COMMAND
-# ========================
-CMD ["sh", "-c", "/wait-for-it.sh $POSTGRES_HOST:$POSTGRES_PORT -- npm run start:prod"]
+# 9. Команда запуска
+CMD ["npm", "run", "start:prod"]

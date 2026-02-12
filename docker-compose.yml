@@ -1,32 +1,59 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: kingkong_db
+  # --- Приложение (Бот) ---
+  app:
+    build: .
+    container_name: downloader_bot
     restart: always
     environment:
-      POSTGRES_USER: saidaka
-      POSTGRES_PASSWORD: Said
-      POSTGRES_DB: kingkong_bot
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - '5432:5432'
-
-  bot:
-    build: .
-    container_name: kingkong_bot
-    restart: always
+      # Настройки подключения к БД внутри Docker сети
+      # "postgres" - это имя сервиса базы данных ниже
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-downloader_db}"
+      # Путь к yt-dlp (он в PATH, так что просто команда)
+      YTDLP_PATH: "yt-dlp"
+      # Путь куда бот кладет файлы (должен совпадать с volume)
+      DOWNLOADS_DIR: "/tmp/bot_downloads"
+      # Остальные переменные подтянутся из .env
+      BOT_TOKEN: ${BOT_TOKEN}
+      TELEGRAM_API_ID: ${API_ID}
+      TELEGRAM_API_HASH: ${API_HASH}
+      ADMIN_USER_ID: ${ADMIN_USER_ID}
+      CHANNEL_ID: ${CHANNEL_ID}
     depends_on:
       - postgres
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://kingkong:strongpassword123@postgres:5432/kingkong_bot
+      - telegram-bot-api
     volumes:
-      - ./downloads:/app/downloads
-    command: ["sh", "-c", "/wait-for-it.sh postgres:5432 -- npm run start:prod"]
+      # Общая папка с локальным сервером
+      - bot_temp_data:/tmp/bot_downloads
+
+  # --- Локальный сервер Telegram (обходит лимит 20МБ) ---
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    container_name: telegram_local_server
+    restart: always
+    environment:
+      TELEGRAM_API_ID: ${API_ID}
+      TELEGRAM_API_HASH: ${API_HASH}
+    volumes:
+      # Данные сервера
+      - ./telegram-bot-api-data:/var/lib/telegram-bot-api
+      # ТА ЖЕ папка, что и у бота, чтобы передавать файлы
+      - bot_temp_data:/tmp/bot_downloads
+    command: --local --verbosity=2 --http-port 8081
+
+  # --- База данных ---
+  postgres:
+    image: postgres:15-alpine
+    container_name: downloader_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: ${POSTGRES_DB:-downloader_db}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data:
+  pg_data:
+  bot_temp_data:
