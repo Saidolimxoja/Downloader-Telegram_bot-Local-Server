@@ -87,9 +87,7 @@ telegram-bot-api \
     --verbosity=2
 ```
 
----
-
-### **3. Настрой .env**
+### **4. Настрой .env**
 
 Скопируй `.env.example` в `.env` и заполни:
 ```bash
@@ -127,7 +125,7 @@ MAX_PARALLEL_DOWNLOADS=3
 MAX_QUEUE_SIZE=50
 ```
 
-### **4. Настрой базу данных**
+### **5. Настрой базу данных**
 ```bash
 # Создай БД
 createdb your_db
