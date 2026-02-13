@@ -18,12 +18,13 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
     private config: ConfigService,
     private uploaderService: UploaderService,
   ) {
-    const token = this.config.get<string>('BOT_TOKEN')!;
-
+    const token = this.config.getOrThrow<string>('BOT_TOKEN')!;
+    const API_URL_HOST = this.config.getOrThrow<string>('API_URL_HOST');
+    const DOCKER_HOST = this.config.getOrThrow<string>('API_URL_DOCKER');
     // 1️⃣ СНАЧАЛА создаем бота
     this.bot = new Bot(token, {
       client: {
-        apiRoot: 'http://localhost:8081',
+        apiRoot: DOCKER_HOST,
       },
     });
 
