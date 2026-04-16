@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
+import * as fs from 'fs';
 import { existsSync, unlinkSync } from 'fs';
 import { VideoInfoDto, FormatDto } from '../downloader/dto/video-info.dto';
 
@@ -40,10 +41,10 @@ export class YtdlpService {
 
       const { stdout } = await execAsync(command.join(' '), {
         maxBuffer: 10 * 1024 * 1024, // 10MB буфер для больших JSON
+        windowsHide: true, // 👈 скрывает окно консоли на Windows
       });
 
       const data = JSON.parse(stdout);
-
 
       return {
         id: data.id,
@@ -73,9 +74,15 @@ export class YtdlpService {
     const audioFormats: FormatDto[] = [];
 
     formats.forEach((f) => {
-      const hasVideo = f.vcodec && f.vcodec !== 'none';
-      const hasAudio = f.acodec && f.acodec !== 'none';
-      const size = f.filesize || f.filesize_approx || 0;
+      const vcodec = f.vcodec ?? '';
+      const acodec = f.acodec ?? '';
+      const size = f.filesize ?? f.filesize_approx ?? 0;
+      const tbr = f.tbr ?? 0;
+      const height = f.height ?? 0;
+
+      // hasVideo — есть height И vcodec не 'none' (или vcodec пустой но есть height)
+      const hasVideo = height > 0 && vcodec !== 'none';
+      const hasAudio = acodec !== '' && acodec !== 'none';
 
       // 🎵 АУДИО
       if (!hasVideo && hasAudio) {
@@ -84,55 +91,46 @@ export class YtdlpService {
           ext: 'm4a',
           resolution: 'audio',
           filesize: size,
-          quality: 0,
+          quality: tbr,
           hasAudio: true,
           vcodec: null,
         });
+        return;
       }
+
       // 🎬 ВИДЕО
-      else if (hasVideo) {
-        const height = f.height || 0;
-        if (height < 144) return; // Мусор пропускаем
+      if (!hasVideo || height < 144) return;
 
-        const existing = videoFormats.get(height);
+      const existing = videoFormats.get(height);
+      const score = size || tbr * 1000;
+      const existingScore = existing
+        ? existing.filesize || existing.quality * 1000
+        : -1;
 
-        // Приоритет H.264 (AVC1) для совместимости с Telegram
-        const isH264 =
-          f.vcodec?.toLowerCase().includes('avc1') ||
-          f.vcodec?.toLowerCase().includes('h264');
-
-        // Берем формат если:
-        // 1. Его еще нет
-        // 2. Новый больше по размеру (лучше битрейт)
-        // 3. Новый в H.264, а старый нет
-        if (
-          size > 0 &&
-          (!existing ||
-            size > existing.filesize ||
-            (isH264 && !existing.vcodec?.includes('avc')))
-        ) {
-          videoFormats.set(height, {
-            formatId: f.format_id,
-            ext: 'mp4',
-            resolution: `${height}p`,
-            filesize: size,
-            quality: height,
-            hasAudio: hasAudio,
-            vcodec: f.vcodec, // Сохраняем кодек для проверки
-          });
-        }
+      // Берём лучший по score для каждого разрешения
+      if (!existing || score > existingScore) {
+        videoFormats.set(height, {
+          formatId: f.format_id,
+          ext: 'mp4',
+          resolution: `${height}p`,
+          filesize: size,
+          quality: height,
+          hasAudio: hasAudio,
+          vcodec: vcodec || 'unknown',
+        });
       }
     });
 
-    // Сортировка по качеству
     const sortedVideos = Array.from(videoFormats.values()).sort(
       (a, b) => b.quality - a.quality,
     );
 
-    // Добавляем лучшее аудио
-    const bestAudio = audioFormats.sort((a, b) => b.filesize - a.filesize)[0];
-
+    const bestAudio = audioFormats.sort((a, b) => b.quality - a.quality)[0];
     if (bestAudio) sortedVideos.push(bestAudio);
+
+    this.logger.debug(
+      `✅ Итого форматов: ${sortedVideos.length} | ${sortedVideos.map((f) => f.resolution).join(', ')}`,
+    );
 
     return sortedVideos;
   }
@@ -156,38 +154,44 @@ export class YtdlpService {
         url,
         '--no-playlist',
         '--no-mtime',
-        // '--no-part',
+        '--restrict-filenames',
         '--output',
         `${outputPathBase}.%(ext)s`,
         '--newline',
         '--progress-template',
         '%(progress._percent_str)s',
+
+        // Включаем обратно, но будем осторожны с пост-процессингом
+        '--write-thumbnail',
+        '--convert-thumbnails',
+        'jpg',
       ];
 
-      // 🍪 Cookies
       if (existsSync(this.cookiesPath)) {
         args.push('--cookies', this.cookiesPath);
       }
 
       if (isAudio) {
-        // 🎵 АУДИО
         args.push('-f', 'bestaudio/best');
         args.push('--extract-audio', '--audio-format', 'm4a');
+        args.push('--embed-thumbnail');
+        args.push('--add-metadata');
       } else {
-        // 🎬 ВИДЕО С ОПТИМИЗАЦИЕЙ ДЛЯ СТРИМИНГА
+        // 🎬 НАСТРОЙКИ ДЛЯ ВИДЕО
         args.push('-f', `${formatId}+bestaudio/best`);
         args.push('--merge-output-format', 'mp4');
 
-        // 🔥 КЛЮЧЕВАЯ МАГИЯ ДЛЯ СТРИМИНГА
-        // -c copy = без реенкода (быстро)
-        // -movflags +faststart = метаданные в начале файла
-        args.push(
-          '--postprocessor-args',
-          'ffmpeg:-c:v copy -c:a copy -movflags +faststart',
-        );
+        // Вшиваем обложку в видео
+        args.push('--embed-thumbnail');
+
+        // Используем --ppa (post-processor-args) аккуратно
+        // Если ошибка повторится, попробуйте сначала убрать флаг -c:v copy
+        args.push('--ppa', 'ffmpeg:-movflags +faststart');
       }
 
-      const child = spawn(this.ytdlpPath, args);
+      const child = spawn(this.ytdlpPath, args, {
+        windowsHide: true, // 👈 скрывает окно консоли на Windows
+      });
 
       let lastProgress = 0;
       let detectedFilename: string | null = null;
@@ -250,7 +254,7 @@ export class YtdlpService {
    */
   async generateThumbnail(videoPath: string): Promise<string | null> {
     try {
-      const thumbPath = videoPath.replace(/\.\w+$/, '_thumb.jpg');
+      const thumbPath = videoPath.replace(/\.\w+$/, '.jpg');
 
       this.logger.debug(`🖼️ Генерация превью: ${thumbPath}`);
 
@@ -272,37 +276,23 @@ export class YtdlpService {
     }
   }
 
-  /**
-   * 5️⃣ ПРОВЕРКА ПОДДЕРЖКИ СТРИМИНГА (НОВОЕ!)
-   */
-  async checkStreamingSupport(videoPath: string): Promise<boolean> {
-    try {
-      const { stdout } = await execAsync(
-        `ffprobe -v error -show_entries format_tags=major_brand -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`,
-      );
+  getThumbnailPath(videoPath: string): string | null {
+    const base = videoPath.replace(/\.(mp4|m4a|webm)$/, '');
+    const thumbPath = videoPath.replace(/\.\w+$/, '.jpg');
 
-      const brand = stdout.trim().toLowerCase();
-
-      // isom, mp42 = поддерживает faststart
-      const isStreamReady = brand.includes('isom') || brand.includes('mp42');
-
-      this.logger.debug(
-        `🔍 Streaming support: ${isStreamReady} (brand: ${brand})`,
-      );
-      return isStreamReady;
-    } catch {
-      return false; // По умолчанию считаем что не поддерживает
+    if (existsSync(thumbPath)) {
+      return thumbPath;
     }
+    return null;
   }
 
   /**
    * 6️⃣ ОЧИСТКА ИМЕНИ ФАЙЛА
    */
   private sanitizeFilename(filename: string): string {
-    return filename
-    .substring(0, 100); // Макс 100 символов
-      //.replace(/[<>:"/\\|?*]/g, '_') // Запрещенные символы
-      //.replace(/\s+/g, '_') // Пробелы -> _
+    return filename.substring(0, 100); // Макс 100 символов
+    //.replace(/[<>:"/\\|?*]/g, '_') // Запрещенные символы
+    //.replace(/\s+/g, '_') // Пробелы -> _
   }
 
   /**

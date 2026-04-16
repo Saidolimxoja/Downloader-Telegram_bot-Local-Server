@@ -10,39 +10,38 @@ import { UploaderService } from '../uploader/uploader.service';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
-  public bot: Bot<Context>;
   private readonly logger = new Logger(BotService.name);
+  private readonly bot: Bot<Context>;
   private isShuttingDown = false;
 
   constructor(
-    private config: ConfigService,
-    private uploaderService: UploaderService,
+    private readonly config: ConfigService,
+    private readonly uploaderService: UploaderService,
   ) {
-    const token = this.config.getOrThrow<string>('BOT_TOKEN')!;
-    const API_URL_HOST = this.config.getOrThrow<string>('API_URL_HOST');
-    const DOCKER_HOST = this.config.getOrThrow<string>('API_URL_DOCKER');
-    // 1️⃣ СНАЧАЛА создаем бота
+    const token = this.config.getOrThrow<string>('BOT_TOKEN');
+    const apiUrl = this.config.getOrThrow<string>('API_URL');
+
     this.bot = new Bot(token, {
       client: {
-        apiRoot: DOCKER_HOST,
+        apiRoot: apiUrl,
       },
     });
 
-    this.logger.log('✅ Бот переведен на LOCAL API (Docker)');
-
-    // 2️⃣ ПОТОМ устанавливаем в UploaderService
-    this.uploaderService.setBot(this.bot);
-    this.logger.log('✅ Bot instance установлен в UploaderService');
+    this.logger.log(`🌐 Telegram API: ${apiUrl}`);
   }
 
   async onModuleInit() {
     try {
-      this.logger.log('🚀 BotService: onModuleInit начат');
+      this.logger.log('🚀 Инициализация бота...');
 
+      // 👉 Передаём bot в сервисы ТОЛЬКО после полной инициализации
+      this.uploaderService.setBot(this.bot);
+
+      // 👉 Проверка бота
       const me = await this.bot.api.getMe();
-      this.logger.log(`✅ Бот авторизован: @${me.username} (ID: ${me.id})`);
+      this.logger.log(`✅ Бот: @${me.username} (ID: ${me.id})`);
 
-      // Устанавливаем команды
+      // 👉 Команды
       await this.bot.api.setMyCommands([
         { command: 'start', description: 'Запуск бота' },
         { command: 'help', description: 'Помощь' },
@@ -51,38 +50,52 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         { command: 'checkchannels', description: 'Проверка каналов (админ)' },
         { command: 'admin', description: 'Админ-панель (админ)' },
       ]);
+
       this.logger.log('✅ Команды установлены');
 
-      // Проверяем webhook или polling
+      // 👉 Webhook или polling
       const webhookUrl = this.config.get<string>('WEBHOOK_URL');
 
       if (webhookUrl) {
-        // Webhook mode (для продакшена)
         await this.bot.api.setWebhook(webhookUrl, {
           drop_pending_updates: true,
         });
-        this.logger.log(`✅ Webhook установлен: ${webhookUrl}`);
-      } else {
-        // Polling mode (для разработки)
-        this.logger.log('🚀 Запуск бота...');
 
-        await this.bot.start({
-          drop_pending_updates: true,
-          onStart: (botInfo) => {
-            this.logger.log(`\n ========================================`);
-            this.logger.log(`   BOT STARTED: @${botInfo.username}`);
-            this.logger.log(`========================================\n`);
-          },
-        });
+        this.logger.log(`🌐 Webhook: ${webhookUrl}`);
+      } else {
+        await this.startPolling();
       }
     } catch (error: any) {
-      if (error.error_code === 409) {
-        this.logger.error('❌ Бот уже запущен в другом процессе!');
-        this.logger.error('💡 Используй: pkill -9 -f "node.*nest"');
-        process.exit(1);
-      }
-      throw error;
+      this.handleError(error);
     }
+  }
+
+  // 🔥 Отдельный метод запуска
+  private async startPolling() {
+    try {
+      this.logger.log('🚀 Запуск polling...');
+
+      await this.bot.start({
+        drop_pending_updates: true,
+        onStart: (botInfo) => {
+          this.logger.log(`🤖 BOT STARTED: @${botInfo.username}`);
+        },
+      });
+    } catch (error: any) {
+      this.handleError(error);
+    }
+  }
+
+  // 🔥 Централизованная обработка ошибок
+  private handleError(error: any) {
+    if (error?.description?.includes('Conflict')) {
+      this.logger.error('❌ Бот уже запущен в другом процессе!');
+      this.logger.error('💡 Останови другой процесс (Docker или локальный)');
+      process.exit(1);
+    }
+
+    this.logger.error(`❌ Ошибка: ${error.message}`);
+    throw error;
   }
 
   async onModuleDestroy() {
@@ -93,11 +106,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     try {
       await this.bot.stop();
-      this.logger.log('✅ Бот успешно остановлен');
-    } catch (error: any) {
-      if (error.error_code !== 409) {
-        this.logger.error(`❌ Ошибка при остановке: ${error.message}`);
-      }
+      this.logger.log('✅ Бот остановлен');
+    } catch {
+      // игнорируем ошибки остановки
     }
   }
 

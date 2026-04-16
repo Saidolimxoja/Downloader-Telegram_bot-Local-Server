@@ -7,16 +7,18 @@ FROM node:20-bookworm-slim
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
+    python3-venv \
     ffmpeg \
     openssl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Устанавливаем yt-dlp через pip (так надежнее, чем apt)
-# Создаем виртуальное окружение для python, чтобы не ломать системный
+# 2. Создаем виртуальное окружение
 ENV VIRTUAL_ENV=/opt/venv
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Теперь pip будет работать внутри venv
 RUN pip3 install --upgrade yt-dlp
 
 # 3. Настройка рабочей директории
@@ -27,7 +29,8 @@ COPY package*.json ./
 COPY prisma ./prisma/
 
 # 5. Устанавливаем Node-зависимости
-RUN npm install
+# В Dockerfile измени строку 32 на эту:
+RUN npm ci --legacy-peer-deps
 
 # 6. Генерируем клиент базы данных
 RUN npx prisma generate
@@ -39,4 +42,4 @@ COPY . .
 RUN npm run build
 
 # 9. Команда запуска
-CMD ["npm", "run", "start:prod"]
+CMD npx prisma migrate deploy && npm run start:prod

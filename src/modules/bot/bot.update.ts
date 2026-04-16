@@ -232,7 +232,9 @@ export class BotUpdate implements OnModuleInit {
     // ==================== USER COMMANDS ====================
 
     bot.command('start', async (ctx) => {
-      this.logger.log(`📥 /start от пользователя ${ctx.from?.id}`);
+      this.logger.log(
+        `📥 /start от пользователя ${ctx.from?.id} - ${ctx.from?.username} - ${ctx.from?.first_name}`,
+      );
 
       const userId = ctx.from?.id;
       if (!userId) return;
@@ -286,13 +288,13 @@ export class BotUpdate implements OnModuleInit {
             `1. Зайди на страницу с интересным роликом (например - https://youtu.be/1baq1YaNsIA?si=Ljw_Ig6KIwxF4c71).\n` +
             `2. Нажми кнопку «Поделиться».\n` +
             `3. В открывшемся меню выбери - Telegram.\n` +
-            `4. Когда откроется Telegram, нажми на чат с гозилой!\n` +
+            `4. Когда откроется Telegram, нажми на чат с Yuklangan_bot!\n` +
             `Или просто вставь ссылку на ролик в чат и отправь ее боту.\n\n` +
             `⚡ Повторные запросы отправляются из кэша мгновенно!\n\n` +
             `🔗 Поддерживаемые платформы:\n` +
             `• YouTube  \n` +
             `• Instagram + Facebook \n\n` +
-            `Если есть вопросы или хотите Соотрудничать пишите Админу @Kingolimxoja`,
+            `Если есть вопросы или хотите Соотрудничать пишите Админу @Saidolimxoja`,
           { parse_mode: 'HTML' },
         );
       } catch (error) {
@@ -300,35 +302,6 @@ export class BotUpdate implements OnModuleInit {
       }
     });
 
-    bot.command('stats', async (ctx) => {
-      const userId = ctx.from?.id;
-      if (!userId) return;
-
-      try {
-        const isAdmin = await this.userService.isAdmin(BigInt(userId));
-        if (!isAdmin) {
-          await ctx.reply(MESSAGES.ERROR_NO_ACCESS);
-          return;
-        }
-
-        const userStats = await this.userService.getStats();
-        const downloaderStats = await this.downloaderService.getStats();
-        const sessionsCount = await this.prisma.videoSession.count();
-
-        await ctx.reply(
-          `📊 *Статистика*\n\n` +
-            `👥 Всего пользователей: ${userStats.totalUsers}\n` +
-            `🟢 Активных сегодня: ${userStats.activeToday}\n` +
-            `💾 Кеш: ${downloaderStats.cacheSize}\n` +
-            `🔄 Активно: ${downloaderStats.activeDownloads}\n` +
-            `⏳ Очередь: ${downloaderStats.queueSize}\n` +
-            `🎬 Видео-сессий: ${sessionsCount}`,
-          { parse_mode: 'Markdown' },
-        );
-      } catch (error) {
-        console.error('❌ Ошибка в /stats:', error);
-      }
-    });
 
     bot.command('channelid', async (ctx) => {
       console.log(`📥 /channelid от пользователя ${ctx.from?.id}`);
@@ -342,8 +315,6 @@ export class BotUpdate implements OnModuleInit {
       }
     });
     // ==================== CHECK SUBSCRIPTION ====================
-
-    // ... внутри registerHandlers() ...
 
     // Обработка кнопки "✅ Проверить подписку"
     bot.callbackQuery('check_subscription', async (ctx) => {

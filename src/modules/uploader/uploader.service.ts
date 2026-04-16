@@ -3,13 +3,12 @@ import { Context, InputFile, Bot } from 'grammy';
 import { YtdlpService } from '../ytdlp/ytdlp.service';
 import { VideoInfoDto } from '../downloader/dto/video-info.dto';
 import { ConfigService } from '@nestjs/config';
-
+import * as path from 'path';
 @Injectable()
 export class UploaderService {
   private readonly logger = new Logger(UploaderService.name);
-  private bot: Bot;
   private readonly archiveChannelId: string;
-
+  private bot: Bot | null = null; // Изначально бот не установлен
   constructor(
     private ytdlpService: YtdlpService,
     private config: ConfigService,
@@ -40,13 +39,6 @@ export class UploaderService {
       // 1. Генерим превью (опционально)
       const thumbnail = await this.ytdlpService.generateThumbnail(videoPath);
 
-      // 2. Проверяем поддержку стриминга (для дебага)
-      const streamingReady =
-        await this.ytdlpService.checkStreamingSupport(videoPath);
-
-      if (!streamingReady) {
-        this.logger.warn('⚠️ Видео может не поддерживать стриминг');
-      }
 
       // 3. Отправляем с превью и поддержкой стриминга
       await ctx.replyWithVideo(new InputFile(videoPath), {
@@ -107,19 +99,23 @@ export class UploaderService {
     isAudio: boolean = false,
   ): Promise<{ fileId: string; messageId: number }> {
     try {
-      this.logger.log(`🔍 Bot instance: ${!!this.bot}`);
-      this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
-
       if (!this.bot) {
         this.logger.error('❌ Bot undefined! Instance ID:', Math.random());
         throw new Error(
           'Bot instance не установлен. Вызовите setBot() сначала.',
         );
       }
+      const absolutePath = path.resolve(videoPath);
+      this.logger.log(`🚀 Отправка через Local API: ${absolutePath}`);
+      this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
 
       let message: any;
+      const userCaption =
+        `✅ ${info.title}\n\n📥 ${info.uploader}\n\n📢` +
+        ` ${this.formatNumber(info.viewCount)} просмотров`;
 
       if (isAudio) {
+        const thumbPath = this.ytdlpService.getThumbnailPath(videoPath);
         // Кешируем аудио
         message = await this.bot.api.sendAudio(
           this.archiveChannelId,
@@ -128,26 +124,41 @@ export class UploaderService {
             title: info.title,
             performer: info.uploader,
             duration: info.duration,
+            caption: this.escapeHtml(userCaption),
+            thumbnail: thumbPath
+              ? new InputFile(path.resolve(thumbPath))
+              : undefined,
           },
         );
+        if (thumbPath) {
+          await this.ytdlpService.safeDelete(thumbPath);
+        }
       } else {
         // Кешируем видео
-        const thumbnail = await this.ytdlpService.generateThumbnail(videoPath);
+        const thumbnailPath =
+          await this.ytdlpService.generateThumbnail(videoPath);
+        const absoluteThumbPath = thumbnailPath
+          ? path.resolve(thumbnailPath)
+          : undefined;
 
         message = await this.bot.api.sendVideo(
           this.archiveChannelId,
-          new InputFile(videoPath),
+          new InputFile(absolutePath),
           {
-            thumbnail: thumbnail ? new InputFile(thumbnail) : undefined,
+            thumbnail: absoluteThumbPath
+              ? new InputFile(absoluteThumbPath)
+              : undefined,
             supports_streaming: true,
             duration: info.duration,
             width: info.width,
             height: info.height,
+            caption: this.escapeHtml(userCaption),
+            parse_mode: 'HTML',
           },
         );
 
-        if (thumbnail) {
-          await this.ytdlpService.safeDelete(thumbnail);
+        if (thumbnailPath) {
+          await this.ytdlpService.safeDelete(thumbnailPath);
         }
       }
 

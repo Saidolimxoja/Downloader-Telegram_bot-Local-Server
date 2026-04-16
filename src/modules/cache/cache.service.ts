@@ -88,6 +88,7 @@ export class CacheService {
         duration: data.duration,
         fileSize: data.fileSize,
         fileType: data.fileType,
+        userId: data.userId,
         downloads: {
           create: {
             userId: data.userId ?? null,

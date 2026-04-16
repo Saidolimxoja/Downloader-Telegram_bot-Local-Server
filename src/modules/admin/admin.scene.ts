@@ -4,6 +4,8 @@ import { AdvertisementService } from '../advertisement/advertisement.service';
 import { ChannelService } from '../channel/channel.service';
 import { UserService } from '../user/user.service';
 import { CreateAdDto } from '../advertisement/dto/create-ad.dto';
+import { PrismaService } from 'src/database/prisma.service';
+import { CacheService } from '../cache/cache.service';
 
 interface TempAdData {
   content?: string;
@@ -33,6 +35,8 @@ export class AdminScene {
     private advertisementService: AdvertisementService,
     private channelService: ChannelService,
     private userService: UserService,
+    private prisma: PrismaService,
+    private cacheService: CacheService,
   ) {}
 
   public getState(userId: number): string | undefined {
@@ -882,18 +886,18 @@ export class AdminScene {
   async showChannelsMenu(ctx: Context): Promise<void> {
     const channels = await this.channelService.getAll();
 
-    let message = `📢 *Обязательные каналы*\n\n`;
+let message = `📢 *__ОБЯЗАТЕЛЬНЫЕ КАНАЛЫ__*\n\n`;
 
     if (channels.length > 0) {
       for (const channel of channels) {
         const status = channel.isActive ? '✅' : '❌';
-        message += `${status} ${channel.channelName}\n`;
+        message += `${status} *${channel.channelName}*\n`;
         message += `   ID: \`${channel.channelId}\`\n`;
         message += `   Приоритет: ${channel.priority}\n\n`;
-        message += `   Ссылка: ${channel.channelLink}\n\n`;
+        message += `   🔗 [Ссылка на канал](${channel.channelLink})\n\n`;
       }
     } else {
-      message += `_Нет каналов_\n\n`;
+      message += `_*Нет каналов*_`;
     }
 
     const keyboard = new InlineKeyboard()
@@ -905,7 +909,7 @@ export class AdminScene {
       .text('« Назад', 'admin:main');
 
     await ctx.editMessageText(message, {
-      parse_mode: 'HTML',
+      parse_mode: 'MarkdownV2',
       reply_markup: keyboard,
     });
   }
@@ -913,12 +917,16 @@ export class AdminScene {
   async showStats(ctx: Context): Promise<void> {
     const userStats = await this.userService.getStats();
     const adStats = await this.advertisementService.getTotalStats();
+    const sessionsCount = await this.prisma.videoSession.count();
+    const cacheStats = await this.cacheService.getStats();
 
     const message =
       `📊 *Статистика бота*\n\n` +
       `👥 *Пользователи:*\n` +
       `• Всего: ${userStats.totalUsers}\n` +
-      `• Активных сегодня: ${userStats.activeToday}\n\n` +
+      `• Активных сегодня: ${userStats.activeToday}\n` +
+      `• Видео-сессий: ${sessionsCount}\n` +
+      `• Кеш: ${cacheStats.totalFiles}\n\n` +
       `📣 *Реклама:*\n` +
       `• Объявлений: ${adStats.totalAds} (${adStats.activeAds} активных)\n` +
       `• Просмотров: ${adStats.totalViews}\n` +
