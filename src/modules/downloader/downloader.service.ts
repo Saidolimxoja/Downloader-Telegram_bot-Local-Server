@@ -92,6 +92,17 @@ export class DownloaderService {
 
       const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
       const isInstagram = url.includes('instagram.com');
+
+      const userId = ctx.from ? BigInt(ctx.from.id) : BigInt(0);
+
+      if (isInstagram) {
+        await ctx.api
+          .deleteMessage(chatId, progressMsg.message_id)
+          .catch(() => {});
+        await this.processInstagramDownload(ctx, videoInfo, userId);
+        return;
+      }
+
       const sessionId = crypto.randomBytes(8).toString('hex');
 
       this.videoDataCache.set(sessionId, videoInfo);
@@ -555,4 +566,97 @@ export class DownloaderService {
       totalUsers: userStats.totalUsers,
     };
   }
+
+  /**
+ * 📥 INSTAGRAM — прямое скачивание без выбора качества
+ */
+private async processInstagramDownload(
+  ctx: Context,
+  videoInfo: VideoInfoDto,
+  userId: bigint,
+): Promise<void> {
+  if (!ctx.chat) return;
+  const chatId = ctx.chat.id;
+  let progressMsg;
+
+  try {
+    progressMsg = await ctx.reply('⬇️ Скачиваю видео...');
+
+    const sanitizedTitle = sanitizeFilename(videoInfo.title);
+    const filename = `${sanitizedTitle}_ig.mp4`;
+    const filepath = path.resolve(this.downloadsDir, filename);
+
+    // Скачиваем лучшее качество
+    await this.ytdlpService.downloadVideo(
+      videoInfo.url,
+      'bestvideo+bestaudio/best',
+      filepath,
+      false,
+      async (progress) => {
+        if (Math.floor(progress) % 20 === 0) {
+          const bar = createProgressBar(progress);
+          await ctx.api
+            .editMessageText(
+              chatId,
+              progressMsg.message_id,
+              `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
+            )
+            .catch(() => {});
+        }
+      },
+    );
+
+    await ctx.api.editMessageText(
+      chatId,
+      progressMsg.message_id,
+      '📤 Загрузка в Телеграм...',
+    ).catch(() => {});
+
+    // Загружаем в канал и кешируем
+    let uploadResult: { fileId: string; messageId: number };
+    try {
+      uploadResult = await this.uploaderService.cacheToChannel(
+        filepath,
+        videoInfo,
+        false,
+      );
+    } catch (cacheError: any) {
+      this.logger.warn(`⚠️ Кеш не удался, отправляю напрямую`);
+      await ctx.replyWithVideo(new InputFile(filepath), {
+        caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+        supports_streaming: true,
+      });
+      await fs.unlink(filepath).catch(() => {});
+      await ctx.api.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
+      return;
+    }
+
+    // Отправляем пользователю
+    await ctx.replyWithVideo(uploadResult.fileId, {
+      caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+      supports_streaming: true,
+    });
+
+    // Очистка
+    await ctx.api.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
+    await fs.unlink(filepath).catch(() => {});
+    const thumb = this.ytdlpService.getThumbnailPath(filepath);
+    if (thumb) await fs.unlink(thumb).catch(() => {});
+
+    // Статистика
+    await this.userService.incrementDownloads(userId);
+    this.advertisementService.incrementUserDownloads(userId);
+
+  } catch (error: any) {
+    this.logger.error(`❌ Instagram download error: ${error.stack}`);
+    if (progressMsg) {
+      await ctx.api
+        .editMessageText(chatId, progressMsg.message_id, `❌ Ошибка: ${error.message}`)
+        .catch(() => {});
+    }
+  }
 }
+}
+
+
+

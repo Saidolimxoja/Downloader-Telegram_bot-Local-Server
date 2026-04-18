@@ -18,6 +18,7 @@ services:
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
+    user: root
     container_name: telegram-bot-api
     restart: always
     environment:
@@ -27,7 +28,7 @@ services:
       - ./telegram-data:/var/lib/telegram-bot-api  # 👈 ВОТ ГЛАВНОЕ
     ports:
       - "8081:8081"
-    command: --local --verbosity=3
+    command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
 
   postgres-db:
     image: postgres:15
