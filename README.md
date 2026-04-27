@@ -28,20 +28,20 @@
 
 ## 📦 Установка и Запуск
 
-### **Требования**
+## **Требования**
 
 - [Node.js 19+](https://nodejs.org/en)
 - [PostgreSQL 15+](https://www.postgresql.org/)
 - [yt-dlp](https://www.ffmpeg.org/)
 - [ffmpeg](https://github.com/yt-dlp/yt-dlp)
 - [Telegram-local-server](https://github.com/tdlib/telegram-bot-api)
-### **1. Клонируй репозиторий**
+## **1. Клонируй репозиторий**
 ```bash
 git clone https://github.com/Saidolimxoja/Downloader-Telegram_bot-Local-Server.git
 cd Downloader-Telegram_bot-Local-Server.git
 ```
 
-### **2. Установи зависимости**
+## **2. Установи зависимости**
 ```bash
 npm install
 ```
@@ -86,9 +86,12 @@ telegram-bot-api \
     --local \
     --verbosity=2
 ```
-
-### **4. Настрой .env**
-
+### Способ 3: Docker-Compose 
+```bash
+docker-compose up --build -d
+```
+Самый простой вариант запуска бота 
+## **4. Настрой .env**
 Скопируй `.env.example` в `.env` и заполни:
 ```bash
 cp .env.example .env
@@ -259,7 +262,7 @@ Pull requests приветствуются!
 
 ## 📞 Поддержка
 
-- Telegram: [@KINGOLIMXOJA](https://t.me/KINGOLIMXOJA)
+- Telegram: [@SAIDOLIMXOJA](https://t.me/SAIDOLIMXOJA)
 - Issues: [GitHub Issues](https://github.com/Saidolimxoja/Downloader-Telegram_bot-Local-Server.git)
 
 ---
@@ -273,4 +276,4 @@ Pull requests приветствуются!
 
 ---
 
-**Сделано с ❤️ by [@KINGOLIMXOJA](https://t.me/KINGOLIMXOJA)**
+**Сделано с ❤️ by [@SAIDOLIMXOJA](https://t.me/SAIDOLIMXOJA)**
