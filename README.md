@@ -106,8 +106,6 @@ API_HASH=your_api_hash_from_my_telegram_org
 # Channels
 CHANNEL_ID=-1001234567890  для примера можешь получить через бот @userinfobot
 
-# Admin
-ADMIN_USER_ID=your_telegram_id 
 
 # Database
 DATABASE_URL=postgresql://user:password@localhost:5432/your_DB_name
@@ -122,7 +120,6 @@ DOWNLOADS_DIR=./downloads
 
 # Queue
 MAX_PARALLEL_DOWNLOADS=3
-MAX_QUEUE_SIZE=50
 ```
 
 ### **5. Настрой базу данных**
