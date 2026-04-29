@@ -709,10 +709,3 @@ export class DownloaderService {
     }
   }
 }
-<<<<<<< HEAD
-}
-=======
-
-
-
->>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a

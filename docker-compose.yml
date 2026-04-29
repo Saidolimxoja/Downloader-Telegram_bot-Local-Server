@@ -1,17 +1,12 @@
-version: '3.8'
-
 services:
   # 1. Твой Бот
   nest-bot:
     build: .
     container_name: king-kong-bot
     restart: always
-<<<<<<< HEAD
-=======
     environment:
       - DOCKER=true
       # ВАЖНО: В .env.docker укажи REDIS_HOST=tg_bot_redis и DB_HOST=postgres-db
->>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a
     env_file: .env.docker
     depends_on:
       postgres-db:
@@ -36,10 +31,6 @@ services:
       - TELEGRAM_API_HASH=71d2422886ee2c510d2cc5efefae732e
     volumes:
       - telegram-data:/var/lib/telegram-bot-api
-<<<<<<< HEAD
-      - ./postgres_data:/var/lib/postgresql/data
-=======
->>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a
     ports:
       - '8081:8081'
     command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
@@ -78,7 +69,4 @@ services:
 volumes:
   postgres_data:
   telegram-data:
-<<<<<<< HEAD
-=======
   redis_data:
->>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a
