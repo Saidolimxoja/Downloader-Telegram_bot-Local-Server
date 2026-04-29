@@ -5,7 +5,7 @@ services:
     build: .
     container_name: king-kong-bot
     restart: always
-    env_file: .env.docker   # 👈 важно
+    env_file: .env.docker
     depends_on:
       postgres-db:
         condition: service_healthy
@@ -14,7 +14,7 @@ services:
     volumes:
       - ./downloads:/app/downloads
     ports:
-      - "3000:3000"
+      - '3000:3000'
 
   telegram-api:
     image: aiogram/telegram-bot-api:latest
@@ -25,9 +25,10 @@ services:
       - TELEGRAM_API_ID=28325464
       - TELEGRAM_API_HASH=71d2422886ee2c510d2cc5efefae732e
     volumes:
-      - ./telegram-data:/var/lib/telegram-bot-api  # 👈 ВОТ ГЛАВНОЕ
+      - telegram-data:/var/lib/telegram-bot-api
+      - ./postgres_data:/var/lib/postgresql/data
     ports:
-      - "8081:8081"
+      - '8081:8081'
     command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
 
   postgres-db:
@@ -35,7 +36,7 @@ services:
     container_name: bot-database
     restart: always
     ports:
-      - "5433:5432"
+      - '5433:5432'
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=Said3838
@@ -43,10 +44,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
   postgres_data:
+  telegram-data:

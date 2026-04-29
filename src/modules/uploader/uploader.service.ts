@@ -24,71 +24,6 @@ export class UploaderService {
     this.logger.log(`🔧 UploaderService instance ID: ${Math.random()}`);
   }
 
-  /**
-   * 📤 ОТПРАВКА ВИДЕО С ПРЕВЬЮ И СТРИМИНГОМ
-   */
-  async sendVideoToUser(
-    ctx: Context,
-    videoPath: string,
-    info: VideoInfoDto,
-    caption?: string,
-  ): Promise<void> {
-    try {
-      this.logger.log(`📤 Отправка видео: ${videoPath}`);
-
-      // 1. Генерим превью (опционально)
-      const thumbnail = await this.ytdlpService.generateThumbnail(videoPath);
-
-
-      // 3. Отправляем с превью и поддержкой стриминга
-      await ctx.replyWithVideo(new InputFile(videoPath), {
-        thumbnail: thumbnail ? new InputFile(thumbnail) : undefined,
-        supports_streaming: true, // 🔥 Главная магия
-        duration: info.duration,
-        width: info.width,
-        height: info.height,
-        caption: this.escapeHtml(caption || this.formatCaption(info)),
-        parse_mode: 'HTML',
-      });
-
-      this.logger.log('✅ Видео отправлено');
-
-      // 4. Чистим временные файлы
-      await this.cleanup(videoPath, thumbnail);
-    } catch (error: any) {
-      this.logger.error(`❌ Ошибка отправки: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * 📤 ОТПРАВКА АУДИО
-   */
-  async sendAudioToUser(
-    ctx: Context,
-    audioPath: string,
-    info: VideoInfoDto,
-  ): Promise<void> {
-    try {
-      this.logger.log(`📤 Отправка аудио: ${audioPath}`);
-
-      await ctx.replyWithAudio(new InputFile(audioPath), {
-        title: info.title,
-        performer: info.uploader,
-        duration: info.duration,
-        caption: this.escapeHtml(this.formatCaption(info)),
-        parse_mode: 'HTML',
-      });
-
-      this.logger.log('✅ Аудио отправлено');
-
-      // Чистим файл
-      await this.ytdlpService.safeDelete(audioPath);
-    } catch (error: any) {
-      this.logger.error(`❌ Ошибка отправки аудио: ${error.message}`);
-      throw error;
-    }
-  }
 
   /**
    * 📤 КЕШИРОВАНИЕ В КАНАЛ (для Local API)
@@ -110,9 +45,11 @@ export class UploaderService {
       this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
 
       let message: any;
+      const fileId = isAudio ? message.audio?.file_id : message.video?.file_id;
       const userCaption =
         `✅ ${info.title}\n\n📥 ${info.uploader}\n\n📢` +
-        ` ${this.formatNumber(info.viewCount)} просмотров`;
+        ` ${this.formatNumber(info.viewCount)} просмотров` +
+        `✅ Закешировано. FileID: ${fileId}, MessageID: ${message.message_id}`;
 
       if (isAudio) {
         const thumbPath = this.ytdlpService.getThumbnailPath(videoPath);
@@ -162,7 +99,7 @@ export class UploaderService {
         }
       }
 
-      const fileId = isAudio ? message.audio?.file_id : message.video?.file_id;
+      
 
       if (!fileId) {
         throw new Error('Не удалось получить file_id из сообщения');
