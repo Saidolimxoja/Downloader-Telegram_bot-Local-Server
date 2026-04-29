@@ -56,37 +56,33 @@ export class CacheService {
   /**
    * Сохранить в кеш
    */
-  async set(data: {
-    url: string;
-    formatId: string;
-    resolution: string;
-    fileId: string;
-    archiveMessageId: number;
-    title?: string;
-    uploader?: string;
-    duration?: number;
-    fileSize?: bigint;
-    fileType: string;
-    userId: bigint;
-  }): Promise<CachedFile> {
-    
-
+  async set(data: any) {
+    // Генерируем ключ (он должен быть помечен как @unique в schema.prisma)
     const cacheKey = generateCacheKey(data.url, data.formatId, data.resolution);
 
     this.logger.log(`💾 Сохранение в кеш: ${data.resolution}`);
 
-    const cached = await this.prisma.cachedFile.create({
-      data: {
-        cacheKey,
-        originalUrl: data.url,
+    const cached = await this.prisma.cachedFile.upsert({
+      where: {
+        cacheKey: cacheKey, // Используем уникальный строковый ключ для поиска
+      },
+      update: {
+        // Если запись нашлась, обновляем только ID файлов
+        fileId: data.fileId,
+        archiveMessageId: data.archiveMessageId,
+      },
+      create: {
+        // Если записи нет, создаем новую
+        cacheKey: cacheKey,
+        originalUrl: data.url, // В схеме поле называется originalUrl
         formatId: data.formatId,
         resolution: data.resolution,
         fileId: data.fileId,
         archiveMessageId: data.archiveMessageId,
         title: data.title,
-        uploader: data.uploader,
-        duration: data.duration,
-        fileSize: data.fileSize,
+        uploader: data.uploader || null,
+        duration: data.duration || null,
+        fileSize: data.fileSize || 0n,
         fileType: data.fileType,
         userId: data.userId,
         downloads: {
@@ -98,7 +94,6 @@ export class CacheService {
       },
     });
 
-    
     // Сохраняем в memory cache
     this.memoryCache.set(cacheKey, cached);
 

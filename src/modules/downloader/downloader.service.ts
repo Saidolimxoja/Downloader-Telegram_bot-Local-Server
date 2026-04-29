@@ -23,9 +23,10 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { AdvertisementService } from '../advertisement/advertisement.service';
-import { VideoSessionService } from './video-session.service';
-import { MESSAGES } from 'src/common/constants/messages.constant';
-
+import { VideoSessionService } from './video-session/video-session.service';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { InjectBot } from '@grammyjs/nestjs';
 @Injectable()
 export class DownloaderService {
   private readonly logger = new Logger(DownloaderService.name);
@@ -33,7 +34,9 @@ export class DownloaderService {
   private activeDownloads = new Map<string, Promise<void>>();
   private readonly downloadsDir: string;
   private readonly yourUsername: string;
+
   constructor(
+    @InjectQueue('download-queue') private downloadQueue: Queue,
     private ytdlpService: YtdlpService,
     private queueService: QueueService,
     private cacheService: CacheService,
@@ -42,6 +45,7 @@ export class DownloaderService {
     private config: ConfigService,
     private advertisementService: AdvertisementService,
     private videoSessionService: VideoSessionService,
+    @InjectBot() private readonly bot: Bot<Context>,
   ) {
     this.downloadsDir =
       this.config.get<string>('DOWNLOADS_DIR') || '/tmp/bot_downloads';
@@ -266,17 +270,13 @@ export class DownloaderService {
     const userId = BigInt(ctx.from.id);
 
     // Получаем данные видео
-    let videoData = this.videoDataCache.get(videoId);
+    const videoData =
+      this.videoDataCache.get(videoId) ||
+      (await this.videoSessionService.get(videoId));
+
     if (!videoData) {
-      const dbData = await this.videoSessionService.get(videoId);
-      if (!dbData) {
-        await ctx.answerCallbackQuery({
-          text: '❌ Ссылка устарела. Отправьте видео заново.',
-        });
-        return;
-      }
-      videoData = dbData;
-      this.videoDataCache.set(videoId, videoData);
+      await ctx.answerCallbackQuery({ text: '❌ Ошибка: данные не найдены.' });
+      return;
     }
 
     // Проверяем кеш
@@ -287,45 +287,57 @@ export class DownloaderService {
     );
 
     if (cached) {
-      this.logger.log(`🎯 Cache HIT: ${resolution}`);
-      await ctx.answerCallbackQuery({
-        text: '⚡ Мгновенно из кеша!',
-        show_alert: false,
-      });
+      this.logger.log(`🎯 Cache HIT: ${videoData.id} [${resolution}]`);
+
+      // 1. Отвечаем на кнопку сразу
+      await ctx
+        .answerCallbackQuery({
+          text: '⚡ Мгновенно из кеша!',
+          show_alert: false,
+        })
+        .catch(() => {});
 
       const isAudio = resolution === 'audio';
       const caption =
-        `${isAudio ? '🎵' : '🎬'} ${videoData.title}\n\n` +
-        `📥 ${resolution}\n` +
-        `⚡ <i>Из кеша — мгновенная доставка</i>\n\n` +
+        `${isAudio ? '🎵' : '🎬'} <b>${this.escapeHtml(videoData.title)}</b>\n\n` +
+        `📥 Качество: <b>${resolution}</b>\n` +
         `📢 ${this.yourUsername}`;
 
       try {
+        // 2. Отправляем файл пользователю по fileId
         if (isAudio) {
           await ctx.replyWithAudio(cached.fileId, {
             caption,
-            parse_mode: 'HTML', // 👈 добавь
+            parse_mode: 'HTML',
             title: videoData.title,
             performer: videoData.uploader || undefined,
           });
         } else {
           await ctx.replyWithVideo(cached.fileId, {
             caption,
-            parse_mode: 'HTML', // 👈 добавь
+            parse_mode: 'HTML',
             supports_streaming: true,
           });
         }
 
-        await this.cacheService.recordCacheHit(cached.id, userId);
-        await this.userService.incrementDownloads(userId);
-        this.advertisementService.incrementUserDownloads(userId);
+        // 3. ОБЯЗАТЕЛЬНО: Обновляем статистику для кешированной загрузки
+        const userId = BigInt(ctx.from.id);
+        await this.cacheService
+          .recordCacheHit(cached.id, userId)
+          .catch(() => {});
+        await this.userService.incrementDownloads(userId).catch(() => {});
 
+        // 4. Проверяем рекламу (даже при кеше мы должны её показывать)
+        this.advertisementService.incrementUserDownloads(userId);
         if (await this.advertisementService.shouldShowAd(userId)) {
-          await this.advertisementService.showAd(ctx);
+          await this.advertisementService.showAd(ctx).catch(() => {});
         }
-        return;
+
+        return; // Завершаем метод, в очередь BullMQ задание не пойдет
       } catch (e) {
-        this.logger.warn(`FileID протух, качаем заново...`);
+        this.logger.warn(
+          `⚠️ FileID протух или ошибка отправки из кеша, переходим к скачиванию: ${e.message}`,
+        );
       }
     }
 
@@ -339,52 +351,71 @@ export class DownloaderService {
     await ctx.answerCallbackQuery({ text: '⬇️ Добавлено в очередь...' });
 
     // Добавляем в очередь
-    const downloadPromise = this.queueService.add(() =>
-      this.processDownload(ctx, bot, videoData!, formatId, resolution, userId),
+    await this.downloadQueue.add(
+      'download-task',
+      {
+        chatId: ctx.chat.id,
+        userId: userId.toString(),
+        videoData,
+        formatId,
+        resolution,
+        isAudio: resolution === 'audio',
+        isInstagram: false,
+      },
+      {
+        attempts: 3, // Если упадет, попробовать еще 3 раза
+        backoff: 5000, // Пауза между попытками 5 сек
+        removeOnComplete: true, // Удалять из Redis после успеха
+      },
     );
 
-    this.activeDownloads.set(downloadKey, downloadPromise);
-    downloadPromise.finally(() => this.activeDownloads.delete(downloadKey));
+    await ctx.answerCallbackQuery({
+      text:
+        '📥 Добавлено в очередь загрузки!\n' +
+        '⏳ Ваше видео поставлено в очередь. Я пришлю его, как только оно будет готово.',
+    });
   }
 
   /**
    * 📥 ПРОЦЕСС СКАЧИВАНИЯ И ЗАГРУЗКИ
    */
-  private async processDownload(
-    ctx: Context,
-    bot: Bot<Context>,
+  async executeDownloadLogic(
+    chatId: number,
+    userId: bigint,
     videoData: VideoInfoDto,
     formatId: string,
     resolution: string,
-    userId: bigint,
+    isAudio: boolean,
+    isInstagram: boolean,
   ): Promise<void> {
-    if (!ctx.chat) return;
-    const chatId = ctx.chat.id;
-    let progressMsg;
+    let progressMsg: any;
 
     try {
-      progressMsg = await ctx.reply('⬇️ Начинаю загрузку...');
+      // 1. Отправляем начальное сообщение через bot.api
+      progressMsg = await this.bot.api.sendMessage(
+        chatId,
+        '⬇️ Начинаю загрузку...',
+      );
 
       const sanitizedTitle = sanitizeFilename(videoData.title);
-      const isAudio = resolution === 'audio';
       const fileExt = isAudio ? 'm4a' : 'mp4';
-
       const filename = `${sanitizedTitle}_${formatId}.${fileExt}`;
       const filepath = path.resolve(this.downloadsDir, filename);
 
-      const sourceUrl =
-        videoData.url || `https://www.youtube.com/watch?v=${videoData.id}`;
+      // YouTube URL или Instagram URL
+      const sourceUrl = videoData.url;
 
-      // 1️⃣ СКАЧИВАНИЕ (yt-dlp с оптимизацией для стриминга)
+      // 2️⃣ СКАЧИВАНИЕ (yt-dlp)
       await this.ytdlpService.downloadVideo(
         sourceUrl,
         formatId,
         filepath,
         isAudio,
         async (progress) => {
+          // Обновляем прогресс раз в 15% чтобы не поймать Flood Limit от Telegram
           if (Math.floor(progress) % 15 === 0) {
             const bar = createProgressBar(progress);
-            await ctx.api
+            await this.bot.api
               .editMessageText(
                 chatId,
                 progressMsg.message_id,
@@ -395,14 +426,15 @@ export class DownloaderService {
         },
       );
 
-      await ctx.api.editMessageText(
-        chatId,
-        progressMsg.message_id,
-        '📤 Загрузка в Телеграм...',
-      );
+      await this.bot.api
+        .editMessageText(
+          chatId,
+          progressMsg.message_id,
+          '📤 Загрузка в Телеграм...',
+        )
+        .catch(() => {});
 
-      // 2️⃣ ЗАГРУЗКА В АРХИВНЫЙ КАНАЛ (через Local API для больших файлов)
-      // 🔥 ИСПРАВЛЕНО: Правильная сигнатура метода
+      // 3️⃣ ЗАГРУЗКА В АРХИВНЫЙ КАНАЛ
       let uploadResult: { fileId: string; messageId: number };
       try {
         uploadResult = await this.uploaderService.cacheToChannel(
@@ -412,96 +444,70 @@ export class DownloaderService {
         );
       } catch (cacheError: any) {
         this.logger.warn(
-          `⚠️ Кеш в канал не удался, отправляю напрямую: ${cacheError.message}`,
+          `⚠️ Кеш не удался, отправляю напрямую: ${cacheError.message}`,
         );
 
-        // Отправляем файл напрямую пользователю без кеширования
+        // Отправка напрямую (fallback), если канал недоступен
         if (isAudio) {
-          await ctx.replyWithAudio(new InputFile(filepath), {
+          await this.bot.api.sendAudio(chatId, new InputFile(filepath), {
             caption: `✅ ${videoData.title}\n\n📥 ${resolution}`,
             title: videoData.title,
             performer: videoData.uploader || undefined,
           });
         } else {
-          await ctx.replyWithVideo(new InputFile(filepath), {
+          await this.bot.api.sendVideo(chatId, new InputFile(filepath), {
             caption: `✅ ${videoData.title}\n\n📥 ${resolution}`,
             supports_streaming: true,
           });
         }
 
-        await fs.unlink(filepath).catch(() => {});
-
-        const leftoverThumb = this.ytdlpService.getThumbnailPath(filepath);
-        if (leftoverThumb) await fs.unlink(leftoverThumb).catch(() => {});
-        await ctx.api
+        await this.cleanupFiles(filepath);
+        await this.bot.api
           .deleteMessage(chatId, progressMsg.message_id)
           .catch(() => {});
         return;
       }
 
-      this.logger.log(`📥 Попытка записи в БД кеш для: ${videoData.id}`);
+      // 4️⃣ СОХРАНЕНИЕ В КЕШ БД
+      await this.saveToCache(
+        filepath,
+        videoData,
+        formatId,
+        resolution,
+        uploadResult,
+        userId,
+        isAudio,
+      );
 
-      // 3️⃣ СОХРАНЕНИЕ В КЕШ БД
-      try {
-        let fileSize = BigInt(0);
-        try {
-          const fileStats = await fs.stat(filepath);
-          fileSize = BigInt(fileStats.size);
-        } catch {
-          this.logger.warn('⚠️ Не удалось получить размер файла');
-        }
-
-        await this.cacheService.set({
-          url: videoData.id,
-          formatId: formatId,
-          resolution: resolution,
-          fileId: uploadResult.fileId,
-          archiveMessageId: uploadResult.messageId,
-          fileSize: fileSize,
-          fileType: isAudio ? 'audio' : 'video',
-          userId: userId,
-          title: videoData.title,
-          uploader: videoData.uploader || undefined,
-          duration: videoData.duration || undefined,
-        });
-
-        this.logger.log(`✅ Успешно сохранено в БД`);
-      } catch (dbError: any) {
-        this.logger.error(`❌ Ошибка сохранения в БД: ${dbError.message}`);
-      }
-
-      // 4️⃣ ОТПРАВКА ПОЛЬЗОВАТЕЛЮ (по file_id из архива)
+      // 5️⃣ ОТПРАВКА ПОЛЬЗОВАТЕЛЮ (по file_id)
       const userCaption = `✅ ${videoData.title}\n\n📥 ${resolution}\n\n📢 ${this.yourUsername}`;
 
       if (isAudio) {
-        await ctx.replyWithAudio(uploadResult.fileId, {
+        await this.bot.api.sendAudio(chatId, uploadResult.fileId, {
           caption: userCaption,
           title: videoData.title,
           performer: videoData.uploader || undefined,
         });
       } else {
-        await ctx.replyWithVideo(uploadResult.fileId, {
+        await this.bot.api.sendVideo(chatId, uploadResult.fileId, {
           caption: userCaption,
           supports_streaming: true,
         });
       }
 
-      // 5️⃣ ОЧИСТКА
-      await ctx.api
+      // 6️⃣ ОЧИСТКА
+      await this.bot.api
         .deleteMessage(chatId, progressMsg.message_id)
         .catch(() => {});
+      await this.cleanupFiles(filepath);
 
-      await fs.unlink(filepath).catch(() => {});
-      const leftoverThumb = this.ytdlpService.getThumbnailPath(filepath);
-      if (leftoverThumb) await fs.unlink(leftoverThumb).catch(() => {});
-
-      // 6️⃣ СТАТИСТИКА
+      // 7️⃣ СТАТИСТИКА
       await this.userService.incrementDownloads(userId);
       this.advertisementService.incrementUserDownloads(userId);
     } catch (error: any) {
       this.logger.error(`Ошибка процесса скачивания: ${error.stack}`);
       if (progressMsg) {
-        await ctx.api
+        await this.bot.api
           .editMessageText(
             chatId,
             progressMsg.message_id,
@@ -509,6 +515,43 @@ export class DownloaderService {
           )
           .catch(() => {});
       }
+    }
+  }
+
+  // Вспомогательный метод для очистки файлов
+  private async cleanupFiles(filepath: string) {
+    await fs.unlink(filepath).catch(() => {});
+    const thumb = this.ytdlpService.getThumbnailPath(filepath);
+    if (thumb) await fs.unlink(thumb).catch(() => {});
+  }
+
+  // Вспомогательный метод для записи в БД
+  private async saveToCache(
+    filepath: string,
+    videoData: any,
+    formatId: string,
+    resolution: string,
+    uploadResult: any,
+    userId: bigint,
+    isAudio: boolean,
+  ) {
+    try {
+      const fileStats = await fs.stat(filepath).catch(() => ({ size: 0 }));
+      await this.cacheService.set({
+        url: videoData.id,
+        formatId: formatId,
+        resolution: resolution,
+        fileId: uploadResult.fileId,
+        archiveMessageId: uploadResult.messageId,
+        fileSize: BigInt(fileStats.size),
+        fileType: isAudio ? 'audio' : 'video',
+        userId: userId,
+        title: videoData.title,
+        uploader: videoData.uploader || undefined,
+        duration: videoData.duration || undefined,
+      });
+    } catch (dbError) {
+      this.logger.error(`Ошибка сохранения в БД: ${dbError.message}`);
     }
   }
 
@@ -568,92 +611,108 @@ export class DownloaderService {
   }
 
   /**
- * 📥 INSTAGRAM — прямое скачивание без выбора качества
- */
-private async processInstagramDownload(
-  ctx: Context,
-  videoInfo: VideoInfoDto,
-  userId: bigint,
-): Promise<void> {
-  if (!ctx.chat) return;
-  const chatId = ctx.chat.id;
-  let progressMsg;
+   * 📥 INSTAGRAM — прямое скачивание без выбора качества
+   */
+  private async processInstagramDownload(
+    ctx: Context,
+    videoInfo: VideoInfoDto,
+    userId: bigint,
+  ): Promise<void> {
+    if (!ctx.chat) return;
+    const chatId = ctx.chat.id;
+    let progressMsg;
 
-  try {
-    progressMsg = await ctx.reply('⬇️ Скачиваю видео...');
-
-    const sanitizedTitle = sanitizeFilename(videoInfo.title);
-    const filename = `${sanitizedTitle}_ig.mp4`;
-    const filepath = path.resolve(this.downloadsDir, filename);
-
-    // Скачиваем лучшее качество
-    await this.ytdlpService.downloadVideo(
-      videoInfo.url,
-      'bestvideo+bestaudio/best',
-      filepath,
-      false,
-      async (progress) => {
-        if (Math.floor(progress) % 20 === 0) {
-          const bar = createProgressBar(progress);
-          await ctx.api
-            .editMessageText(
-              chatId,
-              progressMsg.message_id,
-              `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
-            )
-            .catch(() => {});
-        }
-      },
-    );
-
-    await ctx.api.editMessageText(
-      chatId,
-      progressMsg.message_id,
-      '📤 Загрузка в Телеграм...',
-    ).catch(() => {});
-
-    // Загружаем в канал и кешируем
-    let uploadResult: { fileId: string; messageId: number };
     try {
-      uploadResult = await this.uploaderService.cacheToChannel(
+      progressMsg = await ctx.reply('⬇️ Скачиваю видео...');
+
+      const sanitizedTitle = sanitizeFilename(videoInfo.title);
+      const filename = `${sanitizedTitle}_ig.mp4`;
+      const filepath = path.resolve(this.downloadsDir, filename);
+
+      // Скачиваем лучшее качество
+      await this.ytdlpService.downloadVideo(
+        videoInfo.url,
+        'bestvideo+bestaudio/best',
         filepath,
-        videoInfo,
         false,
+        async (progress) => {
+          if (Math.floor(progress) % 20 === 0) {
+            const bar = createProgressBar(progress);
+            await ctx.api
+              .editMessageText(
+                chatId,
+                progressMsg.message_id,
+                `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
+              )
+              .catch(() => {});
+          }
+        },
       );
-    } catch (cacheError: any) {
-      this.logger.warn(`⚠️ Кеш не удался, отправляю напрямую`);
-      await ctx.replyWithVideo(new InputFile(filepath), {
+
+      await ctx.api
+        .editMessageText(
+          chatId,
+          progressMsg.message_id,
+          '📤 Загрузка в Телеграм...',
+        )
+        .catch(() => {});
+
+      // Загружаем в канал и кешируем
+      let uploadResult: { fileId: string; messageId: number };
+      try {
+        uploadResult = await this.uploaderService.cacheToChannel(
+          filepath,
+          videoInfo,
+          false,
+        );
+      } catch (cacheError: any) {
+        this.logger.warn(`⚠️ Кеш не удался, отправляю напрямую`);
+        await ctx.replyWithVideo(new InputFile(filepath), {
+          caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+          supports_streaming: true,
+        });
+        await fs.unlink(filepath).catch(() => {});
+        await ctx.api
+          .deleteMessage(chatId, progressMsg.message_id)
+          .catch(() => {});
+        return;
+      }
+
+      // Отправляем пользователю
+      await ctx.replyWithVideo(uploadResult.fileId, {
         caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
         supports_streaming: true,
       });
-      await fs.unlink(filepath).catch(() => {});
-      await ctx.api.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
-      return;
-    }
 
-    // Отправляем пользователю
-    await ctx.replyWithVideo(uploadResult.fileId, {
-      caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
-      supports_streaming: true,
-    });
-
-    // Очистка
-    await ctx.api.deleteMessage(chatId, progressMsg.message_id).catch(() => {});
-    await fs.unlink(filepath).catch(() => {});
-    const thumb = this.ytdlpService.getThumbnailPath(filepath);
-    if (thumb) await fs.unlink(thumb).catch(() => {});
-
-    // Статистика
-    await this.userService.incrementDownloads(userId);
-    this.advertisementService.incrementUserDownloads(userId);
-
-  } catch (error: any) {
-    this.logger.error(`❌ Instagram download error: ${error.stack}`);
-    if (progressMsg) {
+      // Очистка
       await ctx.api
-        .editMessageText(chatId, progressMsg.message_id, `❌ Ошибка: ${error.message}`)
+        .deleteMessage(chatId, progressMsg.message_id)
         .catch(() => {});
+      await fs.unlink(filepath).catch(() => {});
+      const thumb = this.ytdlpService.getThumbnailPath(filepath);
+      if (thumb) await fs.unlink(thumb).catch(() => {});
+
+      // Статистика
+      await this.userService.incrementDownloads(userId);
+      this.advertisementService.incrementUserDownloads(userId);
+    } catch (error: any) {
+      this.logger.error(`❌ Instagram download error: ${error.stack}`);
+      if (progressMsg) {
+        await ctx.api
+          .editMessageText(
+            chatId,
+            progressMsg.message_id,
+            `❌ Ошибка: ${error.message}`,
+          )
+          .catch(() => {});
+      }
     }
   }
 }
+<<<<<<< HEAD
 }
+=======
+
+
+
+>>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a

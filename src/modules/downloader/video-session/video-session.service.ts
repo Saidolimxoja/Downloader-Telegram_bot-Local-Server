@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma.service';
-import { VideoInfoDto } from '../downloader/dto/video-info.dto';
+import { PrismaService } from '../../../database/prisma.service';
+import { VideoInfoDto } from '../dto/video-info.dto';
 
 @Injectable()
 export class VideoSessionService {

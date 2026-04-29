@@ -6,21 +6,17 @@ import { User } from '@prisma/client'
 
 @Injectable()
 export class UserService {
-  private readonly adminUserId
+  private readonly adminUserId;
 
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
-  ) {
-    this.adminUserId = this.config.get<number>('ADMIN_USER_ID');
-  }
+  ) {}
 
   /**
    * Создать или обновить пользователя
    */
   async createOrUpdate(dto: CreateUserDto): Promise<User> {
-    const isAdmin = dto.id === this.adminUserId;
-
     return this.prisma.user.upsert({
       where: { id: dto.id },
       update: {
@@ -34,7 +30,6 @@ export class UserService {
         username: dto.username,
         firstName: dto.firstName,
         lastName: dto.lastName,
-        isAdmin,
       },
     });
   }

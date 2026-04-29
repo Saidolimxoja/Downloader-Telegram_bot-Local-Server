@@ -12,8 +12,7 @@ export const validationSchema = Joi.object({
   // Channels
   CHANNEL_ID: Joi.string().required(),
 
-  // Admin
-  ADMIN_USER_ID: Joi.number().required(),
+
 
   // Database
   DATABASE_URL: Joi.string().required(),
@@ -30,5 +29,4 @@ export const validationSchema = Joi.object({
 
   // Queue
   MAX_PARALLEL_DOWNLOADS: Joi.number().default(3),
-  MAX_QUEUE_SIZE: Joi.number().default(50),
 });

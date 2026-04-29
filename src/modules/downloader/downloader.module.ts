@@ -5,23 +5,29 @@ import { ConfigService } from '@nestjs/config';
 import { DownloaderService } from './downloader.service';
 import { YtdlpService } from '../ytdlp/ytdlp.service';
 import { QueueService } from './queue.service';
-import { VideoSessionService } from './video-session.service'; // ← Добавили
+import { VideoSessionService } from './video-session/video-session.service'; // ← Добавили
 import { CacheModule } from '../cache/cache.module';
 import { UploaderModule } from '../uploader/uploader.module';
 import { UserModule } from '../user/user.module';
 import { AdvertisementModule } from '../advertisement/advertisement.module';
-import { VideoSessionCleanupService } from './video-session-cleanup.service';
-import { AdminModule } from '../admin/admin.module';
+import { VideoSessionCleanupService } from './video-session/video-session-cleanup.service';
+import { BullModule } from '@nestjs/bullmq';
+import { DownloadProcessor } from './download.processor';
+import { BotModule } from '../bot/bot.module';
 
 @Module({
   imports: [
+    BullModule.registerQueue({
+      name: 'download-queue',
+    }),
+    //forwardRef(() => BotModule),
     CacheModule,
     forwardRef(() => UploaderModule),
     UserModule,
     AdvertisementModule,
-    UploaderModule
   ],
   providers: [
+    DownloadProcessor,
     DownloaderService,
     YtdlpService,
     VideoSessionService,

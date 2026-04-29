@@ -1,21 +1,31 @@
+version: '3.8'
+
 services:
+  # 1. Твой Бот
   nest-bot:
-    environment:
-      - DOCKER=true
     build: .
     container_name: king-kong-bot
     restart: always
+<<<<<<< HEAD
+=======
+    environment:
+      - DOCKER=true
+      # ВАЖНО: В .env.docker укажи REDIS_HOST=tg_bot_redis и DB_HOST=postgres-db
+>>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a
     env_file: .env.docker
     depends_on:
       postgres-db:
         condition: service_healthy
       telegram-api:
         condition: service_started
+      tg_bot_redis:
+        condition: service_started
     volumes:
       - ./downloads:/app/downloads
     ports:
       - '3000:3000'
 
+  # 2. Локальный Telegram Bot API (для файлов > 50MB)
   telegram-api:
     image: aiogram/telegram-bot-api:latest
     user: root
@@ -26,29 +36,49 @@ services:
       - TELEGRAM_API_HASH=71d2422886ee2c510d2cc5efefae732e
     volumes:
       - telegram-data:/var/lib/telegram-bot-api
+<<<<<<< HEAD
       - ./postgres_data:/var/lib/postgresql/data
+=======
+>>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a
     ports:
       - '8081:8081'
     command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
 
+  # 3. База данных Postgres
   postgres-db:
-    image: postgres:15
+    image: postgres:15-alpine
     container_name: bot-database
     restart: always
     ports:
       - '5433:5432'
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=Said3838
-      - POSTGRES_DB=king_kong_db
+      - POSTGRES_PASSWORD=Said
+      - POSTGRES_DB=yuk-dev-docker
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data # Данные хранятся в именованном томе
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # 4. Redis для очередей BullMQ
+  tg_bot_redis:
+    image: redis:7-alpine
+    container_name: tg_bot_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data # Чтобы очередь не пропадала после перезагрузки
+    command: redis-server --appendonly yes # Включаем сохранение на диск
+
+# Описываем тома (они бессмертны, пока ты не напишешь docker-compose down -v)
 volumes:
   postgres_data:
   telegram-data:
+<<<<<<< HEAD
+=======
+  redis_data:
+>>>>>>> bfde120c11e353dd77f544fa59c18e5ba544a41a
