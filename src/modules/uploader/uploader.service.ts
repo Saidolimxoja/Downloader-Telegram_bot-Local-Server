@@ -17,6 +17,8 @@ export class UploaderService {
     this.archiveChannelId = this.config.get<string>('CHANNEL_ID') || '';
   }
 
+  
+
   // Метод для установки бота (вызывается из BotModule)
   setBot(bot: Bot) {
     this.bot = bot;
@@ -44,8 +46,14 @@ export class UploaderService {
       this.logger.log(`🚀 Отправка через Local API: ${absolutePath}`);
       this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
 
+      
       let message: any;
+
+
+
       const fileId = isAudio ? message.audio?.file_id : message.video?.file_id;
+      
+      
       const userCaption =
         `✅ ${info.title}\n\n📥 ${info.uploader}\n\n📢` +
         ` ${this.formatNumber(info.viewCount)} просмотров` +
