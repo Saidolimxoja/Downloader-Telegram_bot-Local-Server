@@ -17,6 +17,8 @@ export class UploaderService {
     this.archiveChannelId = this.config.get<string>('CHANNEL_ID') || '';
   }
 
+  
+
   // Метод для установки бота (вызывается из BotModule)
   setBot(bot: Bot) {
     this.bot = bot;
@@ -41,11 +43,15 @@ export class UploaderService {
 
       const absolutePath = path.resolve(videoPath);
       this.logger.log(`🚀 Отправка через Local API: ${absolutePath}`);
+      this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
 
       let message: any;
-      let thumbnailPath: string | null | undefined;
+      const fileId = isAudio ? message.audio?.file_id : message.video?.file_id;
+      const userCaption =
+        `✅ ${info.title}\n\n📥 ${info.uploader}\n\n📢` +
+        ` ${this.formatNumber(info.viewCount)} просмотров` +
+        `✅ Закешировано. FileID: ${fileId}, MessageID: ${message.message_id}`;
 
-      // 1. ПОДГОТОВКА И ОТПРАВКА
       if (isAudio) {
         thumbnailPath = this.ytdlpService.getThumbnailPath(videoPath);
         message = await this.bot.api.sendAudio(
