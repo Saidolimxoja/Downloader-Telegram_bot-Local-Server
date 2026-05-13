@@ -11,7 +11,7 @@ services:
       tg_bot_redis:
         condition: service_started
     volumes:
-      - /tmp/bot_downloads:/tmp/bot_downloads
+      - bot_downloads:/tmp/bot_downloads
     ports:
       - '3000:3000'
     networks:
@@ -28,7 +28,7 @@ services:
       - TELEGRAM_API_HASH=${API_HASH}
     volumes:
       - telegram-data:/var/lib/telegram-bot-api
-      - /tmp/bot_downloads:/tmp/bot_downloads
+      - bot_downloads:/tmp/bot_downloads
     ports:
       - '8081:8081'
     command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
@@ -52,6 +52,7 @@ services:
 volumes:
   telegram-data:
   redis_data:
+  bot_downloads:
 
 # Создаем сеть для контейнеров
 networks:
