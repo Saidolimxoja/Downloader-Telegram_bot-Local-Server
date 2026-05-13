@@ -3,7 +3,7 @@
 /node_modules
 /build
 /telegram-data
-
+/.claude
 # Logs
 logs
 *.log
