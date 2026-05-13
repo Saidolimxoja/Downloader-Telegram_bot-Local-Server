@@ -52,35 +52,7 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       ]);
 
       this.logger.log('✅ Команды установлены');
-
-      // 👉 Webhook или polling
-      const webhookUrl = this.config.get<string>('WEBHOOK_URL');
-
-      if (webhookUrl) {
-        await this.bot.api.setWebhook(webhookUrl, {
-          drop_pending_updates: true,
-        });
-
-        this.logger.log(`🌐 Webhook: ${webhookUrl}`);
-      } else {
-        await this.startPolling();
-      }
-    } catch (error: any) {
-      this.handleError(error);
-    }
-  }
-
-  // 🔥 Отдельный метод запуска
-  private async startPolling() {
-    try {
-      this.logger.log('🚀 Запуск polling...');
-
-      await this.bot.start({
-        drop_pending_updates: true,
-        onStart: (botInfo) => {
-          this.logger.log(`🤖 BOT STARTED: @${botInfo.username}`);
-        },
-      });
+      this.logger.log('✅ Бот готов к работе (запуск через BotUpdate)');
     } catch (error: any) {
       this.handleError(error);
     }

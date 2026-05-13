@@ -4,18 +4,21 @@ export const validationSchema = Joi.object({
   // Bot
   BOT_TOKEN: Joi.string().required(),
   YOUR_USERNAME: Joi.string().required(),
+  API_URL: Joi.string().default('http://localhost:8081'),
 
-  // MTProto
-  API_ID: Joi.number().optional(),
-  API_HASH: Joi.string().optional(),
+  // Telegram API (для локального сервера)
+  API_ID: Joi.number().required(),
+  API_HASH: Joi.string().required(),
 
   // Channels
   CHANNEL_ID: Joi.string().required(),
 
-
-
-  // Database
+  // Database (Supabase PostgreSQL)
   DATABASE_URL: Joi.string().required(),
+
+  // Redis
+  REDIS_HOST: Joi.string().default('127.0.0.1'),
+  REDIS_PORT: Joi.number().default(6379),
 
   // App
   NODE_ENV: Joi.string()
