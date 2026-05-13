@@ -43,15 +43,11 @@ export class UploaderService {
 
       const absolutePath = path.resolve(videoPath);
       this.logger.log(`🚀 Отправка через Local API: ${absolutePath}`);
-      this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
 
       let message: any;
-      const fileId = isAudio ? message.audio?.file_id : message.video?.file_id;
-      const userCaption =
-        `✅ ${info.title}\n\n📥 ${info.uploader}\n\n📢` +
-        ` ${this.formatNumber(info.viewCount)} просмотров` +
-        `✅ Закешировано. FileID: ${fileId}, MessageID: ${message.message_id}`;
+      let thumbnailPath: string | null | undefined;
 
+      // 1. ПОДГОТОВКА И ОТПРАВКА
       if (isAudio) {
         thumbnailPath = this.ytdlpService.getThumbnailPath(videoPath);
         message = await this.bot.api.sendAudio(
