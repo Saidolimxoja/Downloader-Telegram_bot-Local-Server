@@ -24,7 +24,6 @@ export class UploaderService {
     this.logger.log(`🔧 UploaderService instance ID: ${Math.random()}`);
   }
 
-
   /**
    * 📤 КЕШИРОВАНИЕ В КАНАЛ (для Local API)
    */
@@ -35,82 +34,96 @@ export class UploaderService {
   ): Promise<{ fileId: string; messageId: number }> {
     try {
       if (!this.bot) {
-        this.logger.error('❌ Bot undefined! Instance ID:', Math.random());
         throw new Error(
           'Bot instance не установлен. Вызовите setBot() сначала.',
         );
       }
+
       const absolutePath = path.resolve(videoPath);
       this.logger.log(`🚀 Отправка через Local API: ${absolutePath}`);
-      this.logger.log(`📤 Кеширование в канал: ${this.archiveChannelId}`);
 
       let message: any;
-      const fileId = isAudio ? message.audio?.file_id : message.video?.file_id;
-      const userCaption =
-        `✅ ${info.title}\n\n📥 ${info.uploader}\n\n📢` +
-        ` ${this.formatNumber(info.viewCount)} просмотров` +
-        `✅ Закешировано. FileID: ${fileId}, MessageID: ${message.message_id}`;
+      let thumbnailPath: string | null | undefined;
 
+      // 1. ПОДГОТОВКА И ОТПРАВКА
       if (isAudio) {
-        const thumbPath = this.ytdlpService.getThumbnailPath(videoPath);
-        // Кешируем аудио
+        thumbnailPath = this.ytdlpService.getThumbnailPath(videoPath);
         message = await this.bot.api.sendAudio(
           this.archiveChannelId,
-          new InputFile(videoPath),
+          new InputFile(absolutePath),
           {
             title: info.title,
             performer: info.uploader,
             duration: info.duration,
-            caption: this.escapeHtml(userCaption),
-            thumbnail: thumbPath
-              ? new InputFile(path.resolve(thumbPath))
+            caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+            thumbnail: thumbnailPath
+              ? new InputFile(path.resolve(thumbnailPath))
               : undefined,
           },
         );
-        if (thumbPath) {
-          await this.ytdlpService.safeDelete(thumbPath);
-        }
       } else {
-        // Кешируем видео
-        const thumbnailPath =
-          await this.ytdlpService.generateThumbnail(videoPath);
-        const absoluteThumbPath = thumbnailPath
-          ? path.resolve(thumbnailPath)
-          : undefined;
-
+        thumbnailPath = await this.ytdlpService.generateThumbnail(videoPath);
         message = await this.bot.api.sendVideo(
           this.archiveChannelId,
           new InputFile(absolutePath),
           {
-            thumbnail: absoluteThumbPath
-              ? new InputFile(absoluteThumbPath)
-              : undefined,
             supports_streaming: true,
             duration: info.duration,
             width: info.width,
             height: info.height,
-            caption: this.escapeHtml(userCaption),
+            caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+            thumbnail: thumbnailPath
+              ? new InputFile(path.resolve(thumbnailPath))
+              : undefined,
             parse_mode: 'HTML',
           },
         );
-
-        if (thumbnailPath) {
-          await this.ytdlpService.safeDelete(thumbnailPath);
-        }
       }
 
-      
+      // 2. ИЗВЛЕЧЕНИЕ ДАННЫХ ИЗ ОТВЕТА
+      let fileId: string | undefined;
+
+      if (isAudio && message.audio) {
+        fileId = message.audio.file_id;
+      } else if (!isAudio && message.video) {
+        fileId = message.video.file_id;
+      }
 
       if (!fileId) {
-        throw new Error('Не удалось получить file_id из сообщения');
+        this.logger.error(`❌ Не удалось получить file_id. Тип: ${isAudio ? 'audio' : 'video'}, Ответ: ${JSON.stringify(message)}`);
+        throw new Error('Не удалось получить file_id из ответа Telegram API');
+      }
+
+      // 3. (ОПЦИОНАЛЬНО) ОБНОВЛЕНИЕ ОПИСАНИЯ В КАНАЛЕ
+      // Теперь, когда у нас есть fileId, мы можем обновить описание сообщения в архиве
+      const updatedCaption =
+        `✅ <b>${this.escapeHtml(info.title)}</b>\n\n` +
+        `📥 Канал: ${this.escapeHtml(info.uploader || 'YouTube')}\n` +
+        `📢 Просмотры: ${this.formatNumber(info.viewCount)}\n` +
+        `🆔 FileID: <code>${fileId}</code>`;
+
+      await this.bot.api
+        .editMessageCaption(this.archiveChannelId, message.message_id, {
+          caption: updatedCaption,
+          parse_mode: 'HTML',
+        })
+        .catch((e) =>
+          this.logger.warn(
+            `Не удалось обновить подпись в архиве: ${e.message}`,
+          ),
+        );
+
+      // 4. ОЧИСТКА ТАМБНЕЙЛА
+      if (thumbnailPath) {
+        await this.ytdlpService.safeDelete(thumbnailPath).catch(() => {});
       }
 
       this.logger.log(
-        `✅ Закешировано. FileID: ${fileId}, MessageID: ${message.message_id}`,
+        `✅ Закешировано успешно. MessageID: ${message.message_id}`,
       );
 
       return {
-        fileId: fileId,
+        fileId,
         messageId: message.message_id,
       };
     } catch (error: any) {
@@ -118,7 +131,6 @@ export class UploaderService {
       throw error;
     }
   }
-
   /**
    * 🧹 ОЧИСТКА ФАЙЛОВ
    */

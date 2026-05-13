@@ -6,12 +6,15 @@ import { User } from '@prisma/client'
 
 @Injectable()
 export class UserService {
-  private readonly adminUserId;
+  private readonly adminUserId: bigint | null;
 
   constructor(
     private prisma: PrismaService,
     private config: ConfigService,
-  ) {}
+  ) {
+    const adminId = this.config.get<string>('ADMIN_USER_ID');
+    this.adminUserId = adminId ? BigInt(adminId) : null;
+  }
 
   /**
    * Создать или обновить пользователя

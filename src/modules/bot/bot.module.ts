@@ -14,7 +14,7 @@ import { ConfigService } from '@nestjs/config';
   imports: [
     NestjsGrammyModule.forRootAsync({
       useFactory: (config: ConfigService) => ({
-        token: config.get<string>('BOT_TOKEN'),
+        token: config.getOrThrow<string>('BOT_TOKEN'),
       }),
       inject: [ConfigService],
     }),

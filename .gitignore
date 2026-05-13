@@ -3,6 +3,7 @@
 /node_modules
 /build
 /telegram-data
+
 # Logs
 logs
 *.log
@@ -14,6 +15,7 @@ lerna-debug.log*
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Tests
 /coverage
@@ -27,6 +29,8 @@ lerna-debug.log*
 *.launch
 .settings/
 *.sublime-workspace
+*.swp
+*.swo
 
 # IDE - VSCode
 .vscode/*
@@ -37,12 +41,13 @@ lerna-debug.log*
 
 # dotenv environment variable files
 .env
+.env.local
 .env.development.local
 .env.test.local
 .env.production.local
-.env.local
 .env.docker
 youtube_cookies.txt
+
 # temp directory
 .temp
 .tmp
@@ -53,42 +58,19 @@ pids
 *.seed
 *.pid.lock
 
-# Diagnostic reports (https://nodejs.org/api/report.html)
+# Diagnostic reports
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
+# Prisma
 /generated/prisma
-# Dependencies
-node_modules/
-
-# Build
-dist/
-build/
-
-# Environment
-.env
-.env.local
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
 
 # Downloads
 downloads/
 *.mp4
 *.m4a
 *.webm
+*.jpg
+*.png
 
 # Cache
-/generated/prisma
 /scripts
-/generated/prisma

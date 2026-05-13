@@ -38,7 +38,8 @@ export class DownloadProcessor extends WorkerHost {
         isInstagram,
       );
     } catch (error) {
-      this.logger.error(`Ошибка в задании ${job.id}: ${error.message}`);
+      const err = error as Error;
+      this.logger.error(`Ошибка в задании ${job.id}: ${err.message}`);
       throw error;
     }
   }

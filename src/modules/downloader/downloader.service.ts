@@ -335,8 +335,9 @@ export class DownloaderService {
 
         return; // Завершаем метод, в очередь BullMQ задание не пойдет
       } catch (e) {
+        const error = e as Error;
         this.logger.warn(
-          `⚠️ FileID протух или ошибка отправки из кеша, переходим к скачиванию: ${e.message}`,
+          `⚠️ FileID протух или ошибка отправки из кеша, переходим к скачиванию: ${error.message}`,
         );
       }
     }
@@ -551,7 +552,8 @@ export class DownloaderService {
         duration: videoData.duration || undefined,
       });
     } catch (dbError) {
-      this.logger.error(`Ошибка сохранения в БД: ${dbError.message}`);
+      const error = dbError as Error;
+      this.logger.error(`Ошибка сохранения в БД: ${error.message}`);
     }
   }
 
@@ -620,7 +622,7 @@ export class DownloaderService {
   ): Promise<void> {
     if (!ctx.chat) return;
     const chatId = ctx.chat.id;
-    let progressMsg;
+    let progressMsg: any = null;
 
     try {
       progressMsg = await ctx.reply('⬇️ Скачиваю видео...');

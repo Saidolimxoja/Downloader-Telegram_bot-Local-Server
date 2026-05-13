@@ -4,21 +4,18 @@ services:
     build: .
     container_name: king-kong-bot
     restart: always
-    environment:
-      - DOCKER=true
-      # ВАЖНО: В .env.docker укажи REDIS_HOST=tg_bot_redis и DB_HOST=postgres-db
-    env_file: .env.docker
+    env_file: .env
     depends_on:
-      postgres-db:
-        condition: service_healthy
       telegram-api:
         condition: service_started
       tg_bot_redis:
         condition: service_started
     volumes:
-      - ./downloads:/app/downloads
+      - /tmp/bot_downloads:/tmp/bot_downloads
     ports:
       - '3000:3000'
+    networks:
+      - bot-network
 
   # 2. Локальный Telegram Bot API (для файлов > 50MB)
   telegram-api:
@@ -27,34 +24,18 @@ services:
     container_name: telegram-bot-api
     restart: always
     environment:
-      - TELEGRAM_API_ID=28325464
-      - TELEGRAM_API_HASH=71d2422886ee2c510d2cc5efefae732e
+      - TELEGRAM_API_ID=${API_ID}
+      - TELEGRAM_API_HASH=${API_HASH}
     volumes:
       - telegram-data:/var/lib/telegram-bot-api
+      - /tmp/bot_downloads:/tmp/bot_downloads
     ports:
       - '8081:8081'
     command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
+    networks:
+      - bot-network
 
-  # 3. База данных Postgres
-  postgres-db:
-    image: postgres:15-alpine
-    container_name: bot-database
-    restart: always
-    ports:
-      - '5433:5432'
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=Said
-      - POSTGRES_DB=yuk-dev-docker
-    volumes:
-      - postgres_data:/var/lib/postgresql/data # Данные хранятся в именованном томе
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres']
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # 4. Redis для очередей BullMQ
+  # 3. Redis для очередей BullMQ
   tg_bot_redis:
     image: redis:7-alpine
     container_name: tg_bot_redis
@@ -62,11 +43,17 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data # Чтобы очередь не пропадала после перезагрузки
-    command: redis-server --appendonly yes # Включаем сохранение на диск
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - bot-network
 
-# Описываем тома (они бессмертны, пока ты не напишешь docker-compose down -v)
+# Описываем тома
 volumes:
-  postgres_data:
   telegram-data:
   redis_data:
+
+# Создаем сеть для контейнеров
+networks:
+  bot-network:
+    driver: bridge
