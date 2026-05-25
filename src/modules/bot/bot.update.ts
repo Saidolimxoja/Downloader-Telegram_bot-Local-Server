@@ -247,16 +247,15 @@ export class BotUpdate implements OnModuleInit {
           lastName: ctx.from?.last_name,
         });
 
-        const isBanned = await this.userService.isBanned(BigInt(userId));
+        const [isBanned, hasSubscription] = await Promise.all([
+          this.userService.isBanned(BigInt(userId)),
+          this.subscriptionService.checkAll(userId, bot),
+        ]);
+
         if (isBanned) {
           await ctx.reply(MESSAGES.ERROR_BANNED);
           return;
         }
-
-        const hasSubscription = await this.subscriptionService.checkAll(
-          userId,
-          bot,
-        );
 
         if (!hasSubscription) {
           const keyboard =

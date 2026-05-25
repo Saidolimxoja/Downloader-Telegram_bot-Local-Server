@@ -7,39 +7,39 @@ export class SubscriptionService {
   constructor(private channelService: ChannelService) {}
 
   /**
-   * Проверить подписан ли пользователь на все каналы
+   * Проверить подписан ли пользователь на все каналы (параллельно)
    */
   async checkAll(userId: number, bot: Bot<Context>): Promise<boolean> {
     const channels = await this.channelService.getActiveChannels();
 
     if (channels.length === 0) {
-      // Если нет обязательных каналов — пропускаем проверку
       return true;
     }
 
-    for (const channel of channels) {
-      try {
-        const member = await bot.api.getChatMember(channel.channelId, userId);
-
-
-        const validStatuses = ['member', 'administrator', 'creator'];
-        if (!validStatuses.includes(member.status)) {
-          console.log(
-            `❌ Пользователь ${userId} не подписан на ${channel.channelName}`,
-          );
-          
-
+    const results = await Promise.allSettled(
+      channels.map(async (channel) => {
+        try {
+          const member = await bot.api.getChatMember(channel.channelId, userId);
+          const validStatuses = ['member', 'administrator', 'creator'];
+          return validStatuses.includes(member.status);
+        } catch (error) {
+          console.error(`❌ Ошибка проверки канала ${channel.channelId}:`, error);
           return false;
         }
-      } catch (error) {
-        console.error(`❌ Ошибка проверки канала ${channel.channelId}:`, error);
-        // Если бот не админ в канале или канал не найден — считаем что не подписан
-        return false;
-      }
+      }),
+    );
+
+    const allSubscribed = results.every(
+      (result) => result.status === 'fulfilled' && result.value === true,
+    );
+
+    if (!allSubscribed) {
+      console.log(`❌ Пользователь ${userId} не подписан на все каналы`);
+    } else {
+      console.log(`✅ Пользователь ${userId} подписан на все каналы`);
     }
 
-    console.log(`✅ Пользователь ${userId} подписан на все каналы`);
-    return true;
+    return allSubscribed;
   }
 
   /**
