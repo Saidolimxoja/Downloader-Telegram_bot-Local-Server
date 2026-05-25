@@ -243,11 +243,10 @@ export class YtdlpService {
 
       this.logger.debug(`🖼️ Генерация превью: ${thumbPath}`);
 
-      // Берем кадр с 1 секунды, ресайзим до 320px
       await execAsync(
         `ffmpeg -ss 00:00:01 -i "${videoPath}" -vframes 1 -vf "scale=320:-1" -y "${thumbPath}"`,
         { timeout: 10000 },
-      );
+      ).catch(() => null);
 
       if (existsSync(thumbPath)) {
         this.logger.log(`✅ Превью готово: ${thumbPath}`);
@@ -257,7 +256,7 @@ export class YtdlpService {
       return null;
     } catch (error: any) {
       this.logger.warn(`⚠️ Не удалось создать превью: ${error.message}`);
-      return null; // Не критично, можно без превью
+      return null;
     }
   }
 
