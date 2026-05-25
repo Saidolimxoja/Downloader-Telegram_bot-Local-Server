@@ -20,37 +20,38 @@ export class CacheService {
   ): Promise<CachedFile | null> {
     const cacheKey = generateCacheKey(url, formatId, resolution);
 
-    // Сначала проверяем memory cache
     const memoryCached = this.memoryCache.get(cacheKey);
     if (memoryCached) {
       this.logger.log(`⚡ Memory cache HIT: ${resolution}`);
+      this.updateCacheStatsAsync(memoryCached.id);
       return memoryCached;
     }
 
-    // Затем проверяем БД
     const dbCached = await this.prisma.cachedFile.findUnique({
       where: { cacheKey },
     });
 
     if (dbCached) {
       this.logger.log(`💾 DB cache HIT: ${resolution}`);
-      // Сохраняем в memory cache
       this.memoryCache.set(cacheKey, dbCached);
-
-      // Обновляем lastAccessedAt и downloadCount
-      await this.prisma.cachedFile.update({
-        where: { id: dbCached.id },
-        data: {
-          lastAccessedAt: new Date(),
-          downloadCount: { increment: 1 },
-        },
-      });
-
+      this.updateCacheStatsAsync(dbCached.id);
       return dbCached;
     }
 
     this.logger.log(`❌ Cache MISS: ${resolution}`);
     return null;
+  }
+
+  private updateCacheStatsAsync(cachedFileId: number): void {
+    this.prisma.cachedFile
+      .update({
+        where: { id: cachedFileId },
+        data: {
+          lastAccessedAt: new Date(),
+          downloadCount: { increment: 1 },
+        },
+      })
+      .catch((err) => this.logger.warn(`⚠️ Не удалось обновить статистику: ${err.message}`));
   }
 
   /**

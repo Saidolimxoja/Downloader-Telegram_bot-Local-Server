@@ -10,11 +10,10 @@ export class ChannelService {
    * Получить все активные обязательные каналы
    */
   async getActiveChannels(): Promise<RequiredChannel[]> {
-    const channelActive = this.prisma.requiredChannel.findMany({
+    return this.prisma.requiredChannel.findMany({
       where: { isActive: true },
       orderBy: { priority: 'asc' },
     });
-    return channelActive;
   }
 
   /**

@@ -133,12 +133,6 @@ export class DownloaderService {
           const hA = parseInt(a.resolution, 10) || 0;
           const hB = parseInt(b.resolution, 10) || 0;
           return hB - hA;
-        })
-        .sort((a, b) => {
-          // Сортировка по убыванию качества (лучшее → худшее)
-          const hA = parseInt(a.resolution, 10) || 0;
-          const hB = parseInt(b.resolution, 10) || 0;
-          return hB - hA; // ← вот ключевой момент: hB - hA
         });
 
       // 2. Собираем финальный порядок: лучшие видео → ... → аудио (если есть)
@@ -167,7 +161,7 @@ export class DownloaderService {
       // 4. Создаём клавиатуру
       const keyboard = new InlineKeyboard();
 
-      const cacheChecks = await Promise.all(
+      const cacheChecks = await Promise.allSettled(
         visibleFormats.map((format) =>
           this.cacheService
             .get(videoInfo.id, format.formatId, format.resolution)
@@ -182,8 +176,9 @@ export class DownloaderService {
           ? formatFileSize(format.filesize)
           : '~ MB';
 
-        const isCached = cacheChecks[idx];
-        const cacheIcon = isCached ? '⚡' : ''; // ⚡ если в кеше
+        const isCached =
+          cacheChecks[idx].status === 'fulfilled' && cacheChecks[idx].value === true;
+        const cacheIcon = isCached ? '⚡' : '';
 
         const label =
           format.resolution === 'audio'

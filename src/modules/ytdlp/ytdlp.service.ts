@@ -26,22 +26,24 @@ export class YtdlpService {
     this.logger.log(`🔍 Анализ: ${url}`);
 
     try {
-      const command = [
-        `"${this.ytdlpPath}"`,
-        `--dump-single-json`,
-        `--no-playlist`,
-        `--no-warnings`,
-        `"${url}"`,
+      const args = [
+        '--dump-single-json',
+        '--no-playlist',
+        '--no-warnings',
+        '--socket-timeout',
+        '10',
+        url,
       ];
 
       if (existsSync(this.cookiesPath)) {
         this.logger.debug(`🍪 Куки найдены: ${this.cookiesPath}`);
-        command.splice(1, 0, `--cookies "${this.cookiesPath}"`);
+        args.unshift('--cookies', this.cookiesPath);
       }
 
-      const { stdout } = await execAsync(command.join(' '), {
-        maxBuffer: 10 * 1024 * 1024, // 10MB буфер для больших JSON
-        windowsHide: true, // 👈 скрывает окно консоли на Windows
+      const { stdout } = await execAsync(`"${this.ytdlpPath}" ${args.map((a) => `"${a}"`).join(' ')}`, {
+        maxBuffer: 10 * 1024 * 1024,
+        windowsHide: true,
+        timeout: 15000,
       });
 
       const data = JSON.parse(stdout);
@@ -49,7 +51,7 @@ export class YtdlpService {
       return {
         id: data.id,
         url: data.webpage_url || url,
-        title: this.sanitizeFilename(data.title), // Чистим название
+        title: this.sanitizeFilename(data.title),
         uploader: data.uploader || data.channel || 'Unknown',
         duration: data.duration || 0,
         viewCount: data.view_count || 0,
@@ -160,11 +162,6 @@ export class YtdlpService {
         '--newline',
         '--progress-template',
         '%(progress._percent_str)s',
-
-        // Включаем обратно, но будем осторожны с пост-процессингом
-        '--write-thumbnail',
-        '--convert-thumbnails',
-        'jpg',
       ];
 
       if (existsSync(this.cookiesPath)) {
@@ -174,40 +171,28 @@ export class YtdlpService {
       if (isAudio) {
         args.push('-f', 'bestaudio/best');
         args.push('--extract-audio', '--audio-format', 'm4a');
-        args.push('--embed-thumbnail');
-        args.push('--add-metadata');
       } else {
-        // 🎬 НАСТРОЙКИ ДЛЯ ВИДЕО
         args.push('-f', `${formatId}+bestaudio/best`);
         args.push('--merge-output-format', 'mp4');
-
-        // Вшиваем обложку в видео
-        args.push('--embed-thumbnail');
-
-        // Используем --ppa (post-processor-args) аккуратно
-        // Если ошибка повторится, попробуйте сначала убрать флаг -c:v copy
         args.push('--ppa', 'ffmpeg:-movflags +faststart');
       }
 
       const child = spawn(this.ytdlpPath, args, {
-        windowsHide: true, // 👈 скрывает окно консоли на Windows
+        windowsHide: true,
       });
 
       let lastProgress = 0;
       let detectedFilename: string | null = null;
 
-      // 📊 Парсинг прогресса
       child.stdout.on('data', (chunk) => {
         const text = chunk.toString();
 
-        // Имя файла
         const mergeMatch = text.match(/Merging formats into "(.+?)"/);
         if (mergeMatch) detectedFilename = mergeMatch[1];
 
         const destMatch = text.match(/Destination: (.+?)$/m);
         if (destMatch) detectedFilename = destMatch[1].trim();
 
-        // Процент
         const percentMatch = text.match(/(\d+\.?\d*)%/);
         if (percentMatch) {
           const percent = parseFloat(percentMatch[1]);
