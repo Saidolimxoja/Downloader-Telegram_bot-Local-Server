@@ -430,9 +430,9 @@ export class DownloaderService {
         )
         .catch(() => {});
 
-      // Скачиваем thumbnail для аудио с YouTube
+      // Генерируем thumbnail для аудио
       if (isAudio) {
-        await this.ytdlpService.downloadThumbnail(sourceUrl, filepath).catch(() => {});
+        await this.ytdlpService.generateThumbnail(filepath).catch(() => {});
       }
 
       // 3️⃣ ЗАГРУЗКА В АРХИВНЫЙ КАНАЛ
