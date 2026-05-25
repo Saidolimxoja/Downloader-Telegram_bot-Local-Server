@@ -47,7 +47,6 @@ export class UploaderService {
       let message: any;
       let thumbnailPath: string | null | undefined;
 
-      // 1. ПОДГОТОВКА И ОТПРАВКА
       if (isAudio) {
         thumbnailPath = this.ytdlpService.getThumbnailPath(videoPath);
         message = await this.bot.api.sendAudio(
@@ -64,7 +63,6 @@ export class UploaderService {
           },
         );
       } else {
-        thumbnailPath = await this.ytdlpService.generateThumbnail(videoPath);
         message = await this.bot.api.sendVideo(
           this.archiveChannelId,
           new InputFile(absolutePath),
@@ -74,15 +72,11 @@ export class UploaderService {
             width: info.width,
             height: info.height,
             caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
-            thumbnail: thumbnailPath
-              ? new InputFile(path.resolve(thumbnailPath))
-              : undefined,
             parse_mode: 'HTML',
           },
         );
       }
 
-      // 2. ИЗВЛЕЧЕНИЕ ДАННЫХ ИЗ ОТВЕТА
       let fileId: string | undefined;
 
       if (isAudio && message.audio) {
@@ -96,26 +90,6 @@ export class UploaderService {
         throw new Error('Не удалось получить file_id из ответа Telegram API');
       }
 
-      // 3. (ОПЦИОНАЛЬНО) ОБНОВЛЕНИЕ ОПИСАНИЯ В КАНАЛЕ
-      // Теперь, когда у нас есть fileId, мы можем обновить описание сообщения в архиве
-      const updatedCaption =
-        `✅ <b>${this.escapeHtml(info.title)}</b>\n\n` +
-        `📥 Канал: ${this.escapeHtml(info.uploader || 'YouTube')}\n` +
-        `📢 Просмотры: ${this.formatNumber(info.viewCount)}\n` +
-        `🆔 FileID: <code>${fileId}</code>`;
-
-      await this.bot.api
-        .editMessageCaption(this.archiveChannelId, message.message_id, {
-          caption: updatedCaption,
-          parse_mode: 'HTML',
-        })
-        .catch((e) =>
-          this.logger.warn(
-            `Не удалось обновить подпись в архиве: ${e.message}`,
-          ),
-        );
-
-      // 4. ОЧИСТКА ТАМБНЕЙЛА
       if (thumbnailPath) {
         await this.ytdlpService.safeDelete(thumbnailPath).catch(() => {});
       }

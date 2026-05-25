@@ -65,17 +65,17 @@ services:
       - bot_downloads:/tmp/bot_downloads
     ports:
       - '8081:8081'
-    command: --local --verbosity=2 --dir=/var/lib/telegram-bot-api
+    command: --local --verbosity=1 --dir=/var/lib/telegram-bot-api --max-connections=1000 --upload-max-file-size=2147483647
     networks:
       - bot-network
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 512M
+          cpus: '2'
+          memory: 2G
         reservations:
-          cpus: '0.5'
-          memory: 256M
+          cpus: '1'
+          memory: 1G
 
   # 3. Redis для очередей BullMQ
   tg_bot_redis:

@@ -686,8 +686,6 @@ export class DownloaderService {
         .deleteMessage(chatId, progressMsg.message_id)
         .catch(() => {});
       await fs.unlink(filepath).catch(() => {});
-      const thumb = this.ytdlpService.getThumbnailPath(filepath);
-      if (thumb) await fs.unlink(thumb).catch(() => {});
 
       // Статистика
       await this.userService.incrementDownloads(userId);
