@@ -48,7 +48,6 @@ export class UploaderService {
       let thumbnailPath: string | null | undefined;
 
       if (isAudio) {
-        thumbnailPath = this.ytdlpService.getThumbnailPath(videoPath);
         message = await this.bot.api.sendAudio(
           this.archiveChannelId,
           new InputFile(absolutePath),
@@ -57,8 +56,8 @@ export class UploaderService {
             performer: info.uploader,
             duration: info.duration,
             caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
-            thumbnail: thumbnailPath
-              ? new InputFile(path.resolve(thumbnailPath))
+            thumbnail: info.thumbnail
+              ? new InputFile(info.thumbnail)
               : undefined,
           },
         );
