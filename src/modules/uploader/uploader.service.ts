@@ -63,6 +63,7 @@ export class UploaderService {
           },
         );
       } else {
+        thumbnailPath = await this.ytdlpService.generateThumbnail(videoPath);
         message = await this.bot.api.sendVideo(
           this.archiveChannelId,
           new InputFile(absolutePath),
@@ -72,6 +73,9 @@ export class UploaderService {
             width: info.width,
             height: info.height,
             caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+            thumbnail: thumbnailPath
+              ? new InputFile(path.resolve(thumbnailPath))
+              : undefined,
             parse_mode: 'HTML',
           },
         );
