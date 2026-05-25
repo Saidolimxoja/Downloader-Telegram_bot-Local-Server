@@ -15,9 +15,11 @@ export class SubscriptionService {
   async checkAll(userId: number, bot: Bot<Context>): Promise<boolean> {
     const cached = this.subscriptionCache.get(userId);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-      console.log(`✅ Пользователь ${userId} подписан на все каналы (из кеша)`);
+      console.log(`✅ Пользователь ${userId} подписан на все каналы (из кеша за ${Date.now() - cached.timestamp}ms)`);
       return cached.result;
     }
+
+    console.log(`🔄 Проверяю подписку для ${userId} (кеш пуст или истёк)`);
 
     const channels = await this.channelService.getActiveChannels();
 
@@ -50,7 +52,7 @@ export class SubscriptionService {
     if (!allSubscribed) {
       console.log(`❌ Пользователь ${userId} не подписан на все каналы`);
     } else {
-      console.log(`✅ Пользователь ${userId} подписан на все каналы`);
+      console.log(`✅ Пользователь ${userId} подписан на все каналы (сохранено в кеш)`);
     }
 
     return allSubscribed;

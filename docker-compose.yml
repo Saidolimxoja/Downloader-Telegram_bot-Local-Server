@@ -1,11 +1,34 @@
 services:
-  # 1. Твой Бот
+  # 1. PostgreSQL Database (локальная)
+  postgres:
+    image: postgres:16-alpine
+    container_name: tg_bot_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bot_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - bot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. Твой Бот
   nest-bot:
     build: .
     container_name: king-kong-bot
     restart: always
     env_file: .env
     depends_on:
+      postgres:
+        condition: service_healthy
       telegram-api:
         condition: service_started
       tg_bot_redis:
@@ -77,6 +100,7 @@ services:
 
 # Описываем тома
 volumes:
+  postgres_data:
   telegram-data:
   redis_data:
   bot_downloads:
