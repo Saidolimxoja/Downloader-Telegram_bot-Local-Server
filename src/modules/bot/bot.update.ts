@@ -232,6 +232,7 @@ export class BotUpdate implements OnModuleInit {
     // ==================== USER COMMANDS ====================
 
     bot.command('start', async (ctx) => {
+      const startTime = Date.now();
       this.logger.log(
         `📥 /start от пользователя ${ctx.from?.id} - ${ctx.from?.username} - ${ctx.from?.first_name}`,
       );
@@ -240,17 +241,21 @@ export class BotUpdate implements OnModuleInit {
       if (!userId) return;
 
       try {
+        const t1 = Date.now();
         await this.userService.createOrUpdate({
           id: BigInt(userId),
           username: ctx.from?.username,
           firstName: ctx.from?.first_name,
           lastName: ctx.from?.last_name,
         });
+        this.logger.debug(`⏱️ createOrUpdate: ${Date.now() - t1}ms`);
 
+        const t2 = Date.now();
         const [isBanned, hasSubscription] = await Promise.all([
           this.userService.isBanned(BigInt(userId)),
           this.subscriptionService.checkAll(userId, bot),
         ]);
+        this.logger.debug(`⏱️ isBanned + checkAll: ${Date.now() - t2}ms`);
 
         if (isBanned) {
           await ctx.reply(MESSAGES.ERROR_BANNED);
@@ -258,16 +263,22 @@ export class BotUpdate implements OnModuleInit {
         }
 
         if (!hasSubscription) {
+          const t3 = Date.now();
           const keyboard =
             await this.subscriptionService.getSubscriptionKeyboard();
+          this.logger.debug(`⏱️ getSubscriptionKeyboard: ${Date.now() - t3}ms`);
+
           await ctx.reply(MESSAGES.SUBSCRIBE_REQUIRED, {
             reply_markup: keyboard,
           });
           return;
         }
 
+        const t4 = Date.now();
         await ctx.reply(MESSAGES.START, { parse_mode: 'Markdown' });
-        this.logger.log(`✅ Ответ отправлен пользователю ${userId}`);
+        this.logger.debug(`⏱️ ctx.reply: ${Date.now() - t4}ms`);
+
+        this.logger.log(`✅ Ответ отправлен пользователю ${userId} (всего: ${Date.now() - startTime}ms)`);
       } catch (error) {
         this.logger.error('❌ Ошибка в /start:', error);
         await ctx.reply('❌ Произошла ошибка');
