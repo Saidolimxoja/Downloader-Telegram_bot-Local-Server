@@ -16,6 +16,17 @@ services:
       - '3000:3000'
     networks:
       - bot-network
+    # Оптимизация для Linux
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
 
   # 2. Локальный Telegram Bot API (для файлов > 50MB)
   telegram-api:
@@ -31,9 +42,17 @@ services:
       - bot_downloads:/tmp/bot_downloads
     ports:
       - '8081:8081'
-    command: --local --verbosity=3 --dir=/var/lib/telegram-bot-api
+    command: --local --verbosity=2 --dir=/var/lib/telegram-bot-api
     networks:
       - bot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
 
   # 3. Redis для очередей BullMQ
   tg_bot_redis:
@@ -44,9 +63,17 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly no --save ""
     networks:
       - bot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
 # Описываем тома
 volumes:

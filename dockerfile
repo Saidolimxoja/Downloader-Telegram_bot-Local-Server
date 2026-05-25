@@ -1,25 +1,21 @@
-# Используем Node 20 на базе Debian (Bookworm), так как там свежие пакеты
-FROM node:20-bookworm-slim
+# Используем Node 20 Alpine для меньшего размера и лучшей производительности на Linux
+FROM node:20-alpine
 
 # 1. Устанавливаем системные зависимости
-# python3-pip и ffmpeg обязательны для yt-dlp и обработки видео
-# openssl нужен для Prisma
-RUN apt-get update && apt-get install -y \
+RUN apk add --no-cache \
     python3 \
-    python3-pip \
-    python3-venv \
+    py3-pip \
     ffmpeg \
     openssl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates
 
 # 2. Создаем виртуальное окружение
 ENV VIRTUAL_ENV=/opt/venv
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Теперь pip будет работать внутри venv
-RUN pip3 install --upgrade yt-dlp
+# Устанавливаем yt-dlp
+RUN pip3 install --no-cache-dir --upgrade yt-dlp
 
 # 3. Настройка рабочей директории
 WORKDIR /app
@@ -28,9 +24,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# 5. Устанавливаем Node-зависимости
-# В Dockerfile измени строку 32 на эту:
-RUN npm ci --legacy-peer-deps
+# 5. Устанавливаем Node-зависимости с кешем
+RUN npm ci --legacy-peer-deps --prefer-offline --no-audit
 
 # 6. Генерируем клиент базы данных
 RUN npx prisma generate
