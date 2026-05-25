@@ -4,12 +4,21 @@ import { ChannelService } from '../channel/channel.service';
 
 @Injectable()
 export class SubscriptionService {
+  private subscriptionCache = new Map<number, { result: boolean; timestamp: number }>();
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 минут
+
   constructor(private channelService: ChannelService) {}
 
   /**
-   * Проверить подписан ли пользователь на все каналы (параллельно)
+   * Проверить подписан ли пользователь на все каналы (с кешем)
    */
   async checkAll(userId: number, bot: Bot<Context>): Promise<boolean> {
+    const cached = this.subscriptionCache.get(userId);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      console.log(`✅ Пользователь ${userId} подписан на все каналы (из кеша)`);
+      return cached.result;
+    }
+
     const channels = await this.channelService.getActiveChannels();
 
     if (channels.length === 0) {
@@ -32,6 +41,11 @@ export class SubscriptionService {
     const allSubscribed = results.every(
       (result) => result.status === 'fulfilled' && result.value === true,
     );
+
+    this.subscriptionCache.set(userId, {
+      result: allSubscribed,
+      timestamp: Date.now(),
+    });
 
     if (!allSubscribed) {
       console.log(`❌ Пользователь ${userId} не подписан на все каналы`);

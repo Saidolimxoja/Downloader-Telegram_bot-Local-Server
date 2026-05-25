@@ -17,18 +17,28 @@ export class UserService {
   }
 
   /**
-   * Создать или обновить пользователя
+   * Создать или обновить пользователя (оптимизировано)
    */
   async createOrUpdate(dto: CreateUserDto): Promise<User> {
-    return this.prisma.user.upsert({
+    const existing = await this.prisma.user.findUnique({
       where: { id: dto.id },
-      update: {
-        username: dto.username,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        lastActiveAt: new Date(),
-      },
-      create: {
+      select: { id: true },
+    });
+
+    if (existing) {
+      return this.prisma.user.update({
+        where: { id: dto.id },
+        data: {
+          username: dto.username,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          lastActiveAt: new Date(),
+        },
+      });
+    }
+
+    return this.prisma.user.create({
+      data: {
         id: dto.id,
         username: dto.username,
         firstName: dto.firstName,
