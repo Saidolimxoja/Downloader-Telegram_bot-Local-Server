@@ -430,11 +430,6 @@ export class DownloaderService {
         )
         .catch(() => {});
 
-      // Генерируем thumbnail для аудио
-      if (isAudio) {
-        await this.ytdlpService.generateThumbnail(filepath).catch(() => {});
-      }
-
       // 3️⃣ ЗАГРУЗКА В АРХИВНЫЙ КАНАЛ
       let uploadResult: { fileId: string; messageId: number };
       try {

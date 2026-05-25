@@ -171,10 +171,12 @@ export class YtdlpService {
       if (isAudio) {
         args.push('-f', 'bestaudio/best');
         args.push('--extract-audio', '--audio-format', 'm4a');
+        args.push('--write-thumbnail');
       } else {
         args.push('-f', `${formatId}+bestaudio/best`);
         args.push('--merge-output-format', 'mp4');
         args.push('--ppa', 'ffmpeg:-movflags +faststart');
+        args.push('--write-thumbnail');
       }
 
       const child = spawn(this.ytdlpPath, args, {
