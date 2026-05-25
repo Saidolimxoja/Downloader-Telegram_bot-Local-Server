@@ -235,7 +235,7 @@ export class YtdlpService {
   }
 
   /**
-   * 4️⃣ ГЕНЕРАЦИЯ ПРЕВЬЮ (НОВОЕ!)
+   * 4️⃣ ГЕНЕРАЦИЯ ПРЕВЬЮ (только для видео)
    */
   async generateThumbnail(videoPath: string): Promise<string | null> {
     try {
@@ -256,6 +256,45 @@ export class YtdlpService {
       return null;
     } catch (error: any) {
       this.logger.warn(`⚠️ Не удалось создать превью: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * 5️⃣ СКАЧИВАНИЕ ПРЕВЬЮ С YOUTUBE
+   */
+  async downloadThumbnail(url: string, outputPath: string): Promise<string | null> {
+    try {
+      const thumbPath = outputPath.replace(/\.\w+$/, '.jpg');
+
+      this.logger.debug(`🖼️ Скачивание превью: ${thumbPath}`);
+
+      const args = [
+        url,
+        '--no-playlist',
+        '--write-thumbnail',
+        '--skip-download',
+        '--output',
+        outputPath.replace(/\.\w+$/, ''),
+      ];
+
+      if (existsSync(this.cookiesPath)) {
+        args.push('--cookies', this.cookiesPath);
+      }
+
+      await execAsync(`"${this.ytdlpPath}" ${args.map((a) => `"${a}"`).join(' ')}`, {
+        timeout: 10000,
+        windowsHide: true,
+      }).catch(() => null);
+
+      if (existsSync(thumbPath)) {
+        this.logger.log(`✅ Превью скачано: ${thumbPath}`);
+        return thumbPath;
+      }
+
+      return null;
+    } catch (error: any) {
+      this.logger.warn(`⚠️ Не удалось скачать превью: ${error.message}`);
       return null;
     }
   }
