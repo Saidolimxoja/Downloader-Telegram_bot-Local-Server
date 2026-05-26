@@ -1,5 +1,29 @@
 services:
   # 1. PostgreSQL Database (локальная для Development)
+  nest-bot:
+    build: .
+    container_name: nest_bot
+    restart: always
+    env_file: .env
+    depends_on:
+      tg_bot_redis_prod:
+        condition: service_started
+    volumes:
+      - bot_downloads:/tmp/bot_downloads
+    ports:
+      - '3000:3000'
+    networks:
+      - bot-network
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
   postgres:
     image: postgres:16-alpine
     container_name: tg_bot_postgres
@@ -23,7 +47,7 @@ services:
   # 2. Redis для очередей BullMQ (Development)
   tg_bot_redis:
     image: redis:7-alpine
-    container_name: tg_bot_redis_dev
+    container_name: tg_bot_redis
     restart: always
     ports:
       - "6379:6379"
@@ -45,6 +69,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  bot_downloads:
 
 # Создаем сеть для контейнеров
 networks:
