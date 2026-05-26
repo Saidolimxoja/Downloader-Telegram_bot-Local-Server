@@ -1,5 +1,5 @@
 services:
-  # 1. PostgreSQL Database (локальная для Development)
+  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: tg_bot_postgres
@@ -20,10 +20,10 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. Redis для очередей BullMQ (Development)
-  tg_bot_redis:
+  # Redis для очередей
+  redis:
     image: redis:7-alpine
-    container_name: tg_bot_redis_dev
+    container_name: tg_bot_redis
     restart: always
     ports:
       - "6379:6379"
@@ -32,14 +32,35 @@ services:
     command: redis-server --appendonly no --save ""
     networks:
       - bot-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # NestJS Application
+  nest-bot:
+    build: .
+    container_name: nest_bot
+    restart: always
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./downloads:/app/downloads
+    ports:
+      - "3000:3000"
+    networks:
+      - bot-network
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/bot_db
+      - DIRECT_URL=postgresql://postgres:postgres@postgres:5432/bot_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
 # Описываем тома
 volumes:
