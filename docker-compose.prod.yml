@@ -5,6 +5,8 @@ services:
     container_name: nest_bot_prod
     restart: always
     env_file: .env.production
+    environment:
+      - NODE_ENV=production
     depends_on:
       tg_bot_redis_prod:
         condition: service_started
@@ -14,8 +16,6 @@ services:
       - '3000:3000'
     networks:
       - bot-network
-    environment:
-      - NODE_ENV=production
     deploy:
       resources:
         limits:
