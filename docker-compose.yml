@@ -20,10 +20,10 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. Redis для очередей BullMQ (используется в обеих средах)
+  # 2. Redis для очередей BullMQ (Development)
   tg_bot_redis:
     image: redis:7-alpine
-    container_name: tg_bot_redis
+    container_name: tg_bot_redis_dev
     restart: always
     ports:
       - "6379:6379"
