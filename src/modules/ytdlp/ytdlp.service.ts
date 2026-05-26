@@ -170,7 +170,7 @@ export class YtdlpService {
 
       if (isAudio) {
         args.push('-f', 'bestaudio/best');
-        args.push('--extract-audio', '--audio-format', 'm4a');
+        args.push('--no-postprocessor-args');
         args.push('--write-thumbnail');
         args.push('--convert-thumbnail', 'jpg');
       } else {
