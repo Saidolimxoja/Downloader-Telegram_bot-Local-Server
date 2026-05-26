@@ -1,3 +1,4 @@
+services:
   # 1. NestJS Bot Application (Production)
   nest-bot:
     build: .
