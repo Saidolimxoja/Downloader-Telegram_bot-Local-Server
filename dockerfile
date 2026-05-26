@@ -30,11 +30,11 @@ RUN npm ci --legacy-peer-deps --prefer-offline --no-audit
 # 6. Генерируем клиент базы данных
 RUN npx prisma generate
 
-# 7. Копируем остальной код
-COPY . .
+# 7. Копируем остальной код (исключаем node_modules)
+COPY --chown=node:node . .
 
 # 8. Собираем проект
 RUN npm run build
 
 # 9. Команда запуска
-CMD sh -c 'if [ "$NODE_ENV" = "production" ]; then DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy; fi && npm run start:prod'
+CMD sh -c 'if [ "$NODE_ENV" = "production" ]; then DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy; fi && NODE_ENV=${NODE_ENV:-development} npm run start:prod'

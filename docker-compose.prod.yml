@@ -1,0 +1,57 @@
+services:
+  # 1. NestJS Bot Application (Production)
+  nest-bot:
+    build: .
+    container_name: nest_bot_prod
+    restart: always
+    env_file: .env.production
+    environment:
+      - NODE_ENV=production
+    depends_on:
+      tg_bot_redis_prod:
+        condition: service_started
+    volumes:
+      - bot_downloads:/tmp/bot_downloads
+    ports:
+      - '3000:3000'
+    networks:
+      - bot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
+
+  # 2. Redis для очередей BullMQ (Production)
+  tg_bot_redis_prod:
+    image: redis:7-alpine
+    container_name: tg_bot_redis_prod
+    restart: always
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data_prod:/data
+    command: redis-server --appendonly no --save ""
+    networks:
+      - bot-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+# Описываем тома
+volumes:
+  redis_data_prod:
+  bot_downloads:
+
+# Создаем сеть для контейнеров
+networks:
+  bot-network:
+    driver: bridge
