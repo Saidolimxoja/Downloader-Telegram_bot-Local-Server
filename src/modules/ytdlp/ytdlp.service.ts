@@ -170,7 +170,8 @@ export class YtdlpService {
 
       if (isAudio) {
         args.push('-f', 'bestaudio/best');
-        args.push('--no-postprocessor-args');
+        args.push('--no-post-overwrites');
+        args.push('--postprocessor-args', 'ffmpeg:-loglevel quiet');
         args.push('--write-thumbnail');
         args.push('--convert-thumbnail', 'jpg');
       } else {
