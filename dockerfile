@@ -37,4 +37,4 @@ COPY . .
 RUN npm run build
 
 # 9. Команда запуска
-CMD sh -c 'DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy && npm run start:prod'
+CMD sh -c 'if [ "$NODE_ENV" = "production" ]; then DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy; fi && npm run start:prod'

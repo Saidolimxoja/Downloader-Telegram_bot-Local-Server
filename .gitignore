@@ -42,10 +42,11 @@ Thumbs.db
 # dotenv environment variable files
 .env
 .env.local
-.env.development.local
+.env.development
 .env.test.local
-.env.production.local
+.env.production
 .env.docker
+!.env.example
 youtube_cookies.txt
 
 # temp directory

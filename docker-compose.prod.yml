@@ -1,26 +1,31 @@
 services:
-  # 1. PostgreSQL Database (локальная для Development)
-  postgres:
-    image: postgres:16-alpine
-    container_name: tg_bot_postgres
+  # 1. NestJS Bot Application (Production)
+  nest-bot:
+    build: .
+    container_name: nest_bot_prod
     restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: bot_db
+    env_file: .env.production
+    depends_on:
+      tg_bot_redis:
+        condition: service_started
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - bot_downloads:/tmp/bot_downloads
     ports:
-      - "5432:5432"
+      - '3000:3000'
     networks:
       - bot-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '1'
+          memory: 512M
 
-  # 2. Redis для очередей BullMQ (используется в обеих средах)
+  # 2. Redis для очередей BullMQ (используется в Production)
   tg_bot_redis:
     image: redis:7-alpine
     container_name: tg_bot_redis
@@ -43,8 +48,8 @@ services:
 
 # Описываем тома
 volumes:
-  postgres_data:
   redis_data:
+  bot_downloads:
 
 # Создаем сеть для контейнеров
 networks:

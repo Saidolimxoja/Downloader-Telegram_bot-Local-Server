@@ -15,6 +15,7 @@ export const validationSchema = Joi.object({
 
   // Database (Supabase PostgreSQL)
   DATABASE_URL: Joi.string().required(),
+  DIRECT_URL: Joi.string().optional(), // Для миграций Prisma
 
   // Redis
   REDIS_HOST: Joi.string().default('127.0.0.1'),

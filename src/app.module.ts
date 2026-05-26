@@ -20,7 +20,10 @@ import { NestjsGrammyModule } from '@grammyjs/nestjs'; // 👈 ДОБАВЬ ЭТ
     ConfigModule.forRoot({
       isGlobal: true,
       validationSchema,
-      envFilePath: '.env',
+      envFilePath: [
+        `.env.${process.env.NODE_ENV || 'development'}`,
+        '.env',
+      ],
     }),
     BullModule.forRootAsync({
       imports: [ConfigModule],
