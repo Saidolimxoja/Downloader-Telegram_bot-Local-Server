@@ -304,7 +304,7 @@ export class BotUpdate implements OnModuleInit {
             `🔗 Поддерживаемые платформы:\n` +
             `• YouTube  \n` +
             `• Instagram + Facebook \n\n` +
-            `Если есть вопросы или хотите Соотрудничать пишите Админу @Saidolimxoja`,
+            `Если есть вопросы или хотите сотрудничать — пишите Админу @Saidolimxoja`,
           { parse_mode: 'HTML' },
         );
       } catch (error) {

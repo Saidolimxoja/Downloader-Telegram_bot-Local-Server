@@ -32,8 +32,16 @@ export class DownloaderService {
   private readonly logger = new Logger(DownloaderService.name);
   private videoDataCache = new Map<string, VideoInfoDto>();
   private activeDownloads = new Map<string, Promise<void>>();
+  // 🛡️ Пользователи, у которых сейчас обрабатывается ссылка (антиспам)
+  private activeUsers = new Set<string>();
   private readonly downloadsDir: string;
   private readonly yourUsername: string;
+
+  // Ограничение памяти для videoDataCache (защита от утечки)
+  private static readonly MAX_VIDEO_CACHE = 500;
+  // Ключи кеша для прямых загрузок (Instagram / YouTube Shorts) — всегда лучшее качество
+  private static readonly DIRECT_FORMAT_ID = 'best';
+  private static readonly DIRECT_RESOLUTION = 'best';
 
   constructor(
     @InjectQueue('download-queue') private downloadQueue: Queue,
@@ -89,6 +97,17 @@ export class DownloaderService {
       );
       return;
     }
+
+    // 🛡️ Антиспам: одна ссылка на пользователя за раз
+    const userKey = ctx.from ? ctx.from.id.toString() : null;
+    if (userKey && this.activeUsers.has(userKey)) {
+      await ctx.reply(
+        '⏳ Подожди, я ещё обрабатываю твою предыдущую ссылку...',
+      );
+      return;
+    }
+    if (userKey) this.activeUsers.add(userKey);
+
     try {
       progressMsg = await ctx.reply('🔍 Анализирую ссылку...');
 
@@ -112,7 +131,7 @@ export class DownloaderService {
 
       const sessionId = crypto.randomBytes(8).toString('hex');
 
-      this.videoDataCache.set(sessionId, videoInfo);
+      this.cacheVideoData(sessionId, videoInfo);
       await this.videoSessionService.save(sessionId, videoInfo);
 
       const MAX_RESOLUTION = isYouTube ? 1080 : isInstagram ? 1080 : 4320;
@@ -252,6 +271,9 @@ export class DownloaderService {
       } else {
         await ctx.reply(errorMsg);
       }
+    } finally {
+      // 🛡️ Снимаем блокировку пользователя в любом случае
+      if (userKey) this.activeUsers.delete(userKey);
     }
   }
   /**
@@ -347,7 +369,11 @@ export class DownloaderService {
       return;
     }
 
-    await ctx.answerCallbackQuery({ text: '⬇️ Добавлено в очередь...' });
+    await ctx.answerCallbackQuery({
+      text:
+        '📥 Добавлено в очередь загрузки!\n' +
+        '⏳ Я пришлю видео, как только оно будет готово.',
+    });
 
     // Добавляем в очередь
     await this.downloadQueue.add(
@@ -367,12 +393,6 @@ export class DownloaderService {
         removeOnComplete: true, // Удалять из Redis после успеха
       },
     );
-
-    await ctx.answerCallbackQuery({
-      text:
-        '📥 Добавлено в очередь загрузки!\n' +
-        '⏳ Ваше видео поставлено в очередь. Я пришлю его, как только оно будет готово.',
-    });
   }
 
   /**
@@ -405,23 +425,27 @@ export class DownloaderService {
       const sourceUrl = videoData.url;
 
       // 2️⃣ СКАЧИВАНИЕ (yt-dlp)
+      let lastProgressBucket = -1;
       await this.ytdlpService.downloadVideo(
         sourceUrl,
         formatId,
         filepath,
         isAudio,
         async (progress) => {
-          // Обновляем прогресс раз в 15% чтобы не поймать Flood Limit от Telegram
-          if (Math.floor(progress) % 15 === 0) {
-            const bar = createProgressBar(progress);
-            await this.bot.api
-              .editMessageText(
-                chatId,
-                progressMsg.message_id,
-                `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
-              )
-              .catch(() => {});
-          }
+          // Обновляем прогресс раз в 15% — ровно один раз на каждый диапазон,
+          // чтобы не словить Flood Limit от Telegram и не было дублей
+          const bucket = Math.floor(progress / 15);
+          if (bucket === lastProgressBucket) return;
+          lastProgressBucket = bucket;
+
+          const bar = createProgressBar(progress);
+          await this.bot.api
+            .editMessageText(
+              chatId,
+              progressMsg.message_id,
+              `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
+            )
+            .catch(() => {});
         },
       );
 
@@ -524,6 +548,20 @@ export class DownloaderService {
     if (thumb) await fs.unlink(thumb).catch(() => {});
   }
 
+  /**
+   * 💾 Запись в in-memory кеш видео с ограничением размера (защита от утечки памяти).
+   * Map сохраняет порядок вставки — при переполнении удаляем самые старые записи.
+   */
+  private cacheVideoData(sessionId: string, videoInfo: VideoInfoDto): void {
+    this.videoDataCache.set(sessionId, videoInfo);
+
+    while (this.videoDataCache.size > DownloaderService.MAX_VIDEO_CACHE) {
+      const oldestKey = this.videoDataCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.videoDataCache.delete(oldestKey);
+    }
+  }
+
   // Вспомогательный метод для записи в БД
   private async saveToCache(
     filepath: string,
@@ -624,6 +662,34 @@ export class DownloaderService {
     let progressMsg: any = null;
 
     try {
+      // 1️⃣ ПРОВЕРКА КЕША — популярные Shorts/Reels отдаём мгновенно
+      const cached = await this.cacheService.get(
+        videoInfo.id,
+        DownloaderService.DIRECT_FORMAT_ID,
+        DownloaderService.DIRECT_RESOLUTION,
+      );
+
+      if (cached) {
+        this.logger.log(`🎯 Cache HIT (direct): ${videoInfo.id}`);
+        try {
+          await ctx.replyWithVideo(cached.fileId, {
+            caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+            supports_streaming: true,
+          });
+          await this.cacheService
+            .recordCacheHit(cached.id, userId)
+            .catch(() => {});
+          await this.userService.incrementDownloads(userId).catch(() => {});
+          this.advertisementService.incrementUserDownloads(userId);
+          return;
+        } catch (e) {
+          const err = e as Error;
+          this.logger.warn(
+            `⚠️ FileID из кеша протух, скачиваю заново: ${err.message}`,
+          );
+        }
+      }
+
       progressMsg = await ctx.reply('⬇️ Скачиваю видео...');
 
       const sanitizedTitle = sanitizeFilename(videoInfo.title);
@@ -632,22 +698,25 @@ export class DownloaderService {
       const filepath = path.resolve(this.downloadsDir, filename);
 
       // Скачиваем лучшее качество
+      let lastProgressBucket = -1;
       await this.ytdlpService.downloadVideo(
         videoInfo.url,
         'bestvideo+bestaudio/best',
         filepath,
         false,
         async (progress) => {
-          if (Math.floor(progress) % 20 === 0) {
-            const bar = createProgressBar(progress);
-            await ctx.api
-              .editMessageText(
-                chatId,
-                progressMsg.message_id,
-                `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
-              )
-              .catch(() => {});
-          }
+          const bucket = Math.floor(progress / 15);
+          if (bucket === lastProgressBucket) return;
+          lastProgressBucket = bucket;
+
+          const bar = createProgressBar(progress);
+          await ctx.api
+            .editMessageText(
+              chatId,
+              progressMsg.message_id,
+              `⬇️ Скачивание\n${bar} ${Math.floor(progress)}%`,
+            )
+            .catch(() => {});
         },
       );
 
@@ -685,6 +754,17 @@ export class DownloaderService {
         caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
         supports_streaming: true,
       });
+
+      // 💾 Сохраняем в кеш БД — повторные запросы этого видео будут мгновенными
+      await this.saveToCache(
+        filepath,
+        videoInfo,
+        DownloaderService.DIRECT_FORMAT_ID,
+        DownloaderService.DIRECT_RESOLUTION,
+        uploadResult,
+        userId,
+        false,
+      );
 
       // Очистка
       await ctx.api
