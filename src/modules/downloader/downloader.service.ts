@@ -96,14 +96,17 @@ export class DownloaderService {
 
       const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
       const isInstagram = url.includes('instagram.com');
+      const isYouTubeShorts = url.includes('/shorts/');
 
       const userId = ctx.from ? BigInt(ctx.from.id) : BigInt(0);
 
-      if (isInstagram) {
+      // Instagram и YouTube Shorts — скачиваем сразу в максимальном качестве,
+      // без выбора качества
+      if (isInstagram || isYouTubeShorts) {
         await ctx.api
           .deleteMessage(chatId, progressMsg.message_id)
           .catch(() => {});
-        await this.processInstagramDownload(ctx, videoInfo, userId);
+        await this.processDirectDownload(ctx, videoInfo, userId, isInstagram);
         return;
       }
 
@@ -608,12 +611,13 @@ export class DownloaderService {
   }
 
   /**
-   * 📥 INSTAGRAM — прямое скачивание без выбора качества
+   * 📥 ПРЯМОЕ СКАЧИВАНИЕ без выбора качества (Instagram + YouTube Shorts)
    */
-  private async processInstagramDownload(
+  private async processDirectDownload(
     ctx: Context,
     videoInfo: VideoInfoDto,
     userId: bigint,
+    isInstagram: boolean,
   ): Promise<void> {
     if (!ctx.chat) return;
     const chatId = ctx.chat.id;
@@ -623,7 +627,8 @@ export class DownloaderService {
       progressMsg = await ctx.reply('⬇️ Скачиваю видео...');
 
       const sanitizedTitle = sanitizeFilename(videoInfo.title);
-      const filename = `${sanitizedTitle}_ig.mp4`;
+      const suffix = isInstagram ? 'ig' : 'short';
+      const filename = `${sanitizedTitle}_${suffix}.mp4`;
       const filepath = path.resolve(this.downloadsDir, filename);
 
       // Скачиваем лучшее качество
@@ -691,7 +696,7 @@ export class DownloaderService {
       await this.userService.incrementDownloads(userId);
       this.advertisementService.incrementUserDownloads(userId);
     } catch (error: any) {
-      this.logger.error(`❌ Instagram download error: ${error.stack}`);
+      this.logger.error(`❌ Direct download error: ${error.stack}`);
       if (progressMsg) {
         await ctx.api
           .editMessageText(
