@@ -1,12 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { exec, spawn } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import { existsSync, unlinkSync } from 'fs';
 import { VideoInfoDto, FormatDto } from '../downloader/dto/video-info.dto';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 @Injectable()
 export class YtdlpService {
@@ -40,7 +41,9 @@ export class YtdlpService {
         args.unshift('--cookies', this.cookiesPath);
       }
 
-      const { stdout } = await execAsync(`"${this.ytdlpPath}" ${args.map((a) => `"${a}"`).join(' ')}`, {
+      // ⚠️ execFile (не exec) — аргументы передаются массивом, без интерпретации
+      // shell. Это исключает command injection через URL пользователя.
+      const { stdout } = await execFileAsync(this.ytdlpPath, args, {
         maxBuffer: 10 * 1024 * 1024,
         windowsHide: true,
         timeout: 15000,
@@ -63,8 +66,11 @@ export class YtdlpService {
         formats: this.getBestFormats(data.formats || []),
       };
     } catch (error: any) {
-      this.logger.error(`❌ Ошибка getVideoInfo: ${error.message}`);
-      throw new Error('Видео недоступно или ссылка неверна.');
+      // Пробрасываем реальный текст ошибки yt-dlp, чтобы вызывающий код мог
+      // показать понятное сообщение (приватное видео, возрастное ограничение и т.д.)
+      const details: string = error.stderr || error.message || '';
+      this.logger.error(`❌ Ошибка getVideoInfo: ${details.substring(0, 500)}`);
+      throw new Error(details || 'Видео недоступно или ссылка неверна.');
     }
   }
 
@@ -185,6 +191,18 @@ export class YtdlpService {
         windowsHide: true,
       });
 
+      // ⏱️ Защита от зависших загрузок: убиваем процесс через 5 минут,
+      // чтобы он не держал слот очереди вечно
+      const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+      let settled = false;
+      const timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.logger.error('❌ Таймаут скачивания — убиваю процесс yt-dlp');
+        child.kill('SIGKILL');
+        reject(new Error('Таймаут скачивания (превышено 5 минут)'));
+      }, DOWNLOAD_TIMEOUT_MS);
+
       let lastProgress = 0;
       let detectedFilename: string | null = null;
 
@@ -219,6 +237,10 @@ export class YtdlpService {
       });
 
       child.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
+
         if (code === 0) {
           const finalExt = isAudio ? '.m4a' : '.mp4';
           const finalPath = detectedFilename || `${outputPathBase}${finalExt}`;
@@ -232,6 +254,9 @@ export class YtdlpService {
       });
 
       child.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
         this.logger.error(`❌ Ошибка процесса: ${err.message}`);
         reject(err);
       });
