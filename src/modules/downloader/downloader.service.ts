@@ -125,7 +125,54 @@ export class DownloaderService {
         await ctx.api
           .deleteMessage(chatId, progressMsg.message_id)
           .catch(() => {});
-        await this.processDirectDownload(ctx, videoInfo, userId, isInstagram);
+
+        // ⚡ Быстрый путь: если видео уже в кеше — отдаём мгновенно, минуя очередь
+        const cached = await this.cacheService.get(
+          videoInfo.id,
+          DownloaderService.DIRECT_FORMAT_ID,
+          DownloaderService.DIRECT_RESOLUTION,
+        );
+
+        if (cached) {
+          try {
+            await ctx.replyWithVideo(cached.fileId, {
+              caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+              supports_streaming: true,
+            });
+            await this.cacheService
+              .recordCacheHit(cached.id, userId)
+              .catch(() => {});
+            await this.userService.incrementDownloads(userId).catch(() => {});
+            this.advertisementService.incrementUserDownloads(userId);
+            return;
+          } catch (e) {
+            const err = e as Error;
+            this.logger.warn(
+              `⚠️ FileID из кеша протух, ставлю в очередь: ${err.message}`,
+            );
+          }
+        }
+
+        // Иначе — в очередь (НЕ блокируем бота на время скачивания)
+        await this.downloadQueue.add(
+          'download-task',
+          {
+            chatId,
+            userId: userId.toString(),
+            videoData: videoInfo,
+            isDirect: true,
+            isInstagram,
+          },
+          {
+            attempts: 3,
+            backoff: 5000,
+            removeOnComplete: true,
+          },
+        );
+
+        await ctx.reply(
+          '📥 Видео добавлено в очередь!\n⏳ Я пришлю его, как только оно будет готово.',
+        );
         return;
       }
 
@@ -649,20 +696,21 @@ export class DownloaderService {
   }
 
   /**
-   * 📥 ПРЯМОЕ СКАЧИВАНИЕ без выбора качества (Instagram + YouTube Shorts)
+   * 📥 ПРЯМОЕ СКАЧИВАНИЕ без выбора качества (Instagram + YouTube Shorts).
+   * Выполняется в воркере очереди, поэтому работает через this.bot.api + chatId
+   * (без ctx) и не блокирует обработку сообщений бота.
    */
-  private async processDirectDownload(
-    ctx: Context,
-    videoInfo: VideoInfoDto,
+  async executeDirectDownloadLogic(
+    chatId: number,
     userId: bigint,
+    videoInfo: VideoInfoDto,
     isInstagram: boolean,
   ): Promise<void> {
-    if (!ctx.chat) return;
-    const chatId = ctx.chat.id;
     let progressMsg: any = null;
 
     try {
-      // 1️⃣ ПРОВЕРКА КЕША — популярные Shorts/Reels отдаём мгновенно
+      // 1️⃣ ПРОВЕРКА КЕША — на случай, если видео закешировали, пока задача ждала
+      // в очереди (популярные Shorts/Reels запрашивают одновременно много людей)
       const cached = await this.cacheService.get(
         videoInfo.id,
         DownloaderService.DIRECT_FORMAT_ID,
@@ -672,7 +720,7 @@ export class DownloaderService {
       if (cached) {
         this.logger.log(`🎯 Cache HIT (direct): ${videoInfo.id}`);
         try {
-          await ctx.replyWithVideo(cached.fileId, {
+          await this.bot.api.sendVideo(chatId, cached.fileId, {
             caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
             supports_streaming: true,
           });
@@ -690,7 +738,7 @@ export class DownloaderService {
         }
       }
 
-      progressMsg = await ctx.reply('⬇️ Скачиваю видео...');
+      progressMsg = await this.bot.api.sendMessage(chatId, '⬇️ Скачиваю видео...');
 
       const sanitizedTitle = sanitizeFilename(videoInfo.title);
       const suffix = isInstagram ? 'ig' : 'short';
@@ -710,7 +758,7 @@ export class DownloaderService {
           lastProgressBucket = bucket;
 
           const bar = createProgressBar(progress);
-          await ctx.api
+          await this.bot.api
             .editMessageText(
               chatId,
               progressMsg.message_id,
@@ -720,7 +768,7 @@ export class DownloaderService {
         },
       );
 
-      await ctx.api
+      await this.bot.api
         .editMessageText(
           chatId,
           progressMsg.message_id,
@@ -738,19 +786,19 @@ export class DownloaderService {
         );
       } catch (cacheError: any) {
         this.logger.warn(`⚠️ Кеш не удался, отправляю напрямую`);
-        await ctx.replyWithVideo(new InputFile(filepath), {
+        await this.bot.api.sendVideo(chatId, new InputFile(filepath), {
           caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
           supports_streaming: true,
         });
         await fs.unlink(filepath).catch(() => {});
-        await ctx.api
+        await this.bot.api
           .deleteMessage(chatId, progressMsg.message_id)
           .catch(() => {});
         return;
       }
 
       // Отправляем пользователю
-      await ctx.replyWithVideo(uploadResult.fileId, {
+      await this.bot.api.sendVideo(chatId, uploadResult.fileId, {
         caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
         supports_streaming: true,
       });
@@ -767,7 +815,7 @@ export class DownloaderService {
       );
 
       // Очистка
-      await ctx.api
+      await this.bot.api
         .deleteMessage(chatId, progressMsg.message_id)
         .catch(() => {});
       await fs.unlink(filepath).catch(() => {});
@@ -778,7 +826,7 @@ export class DownloaderService {
     } catch (error: any) {
       this.logger.error(`❌ Direct download error: ${error.stack}`);
       if (progressMsg) {
-        await ctx.api
+        await this.bot.api
           .editMessageText(
             chatId,
             progressMsg.message_id,

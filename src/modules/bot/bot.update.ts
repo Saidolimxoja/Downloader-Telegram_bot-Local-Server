@@ -1,6 +1,7 @@
 // src/modules/bot/bot.update.ts
 
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { run, sequentialize, RunnerHandle } from '@grammyjs/runner';
 import { BotService } from './bot.service';
 import { UserService } from '../user/user.service';
 import { SubscriptionService } from '../subscription/subscription.service';
@@ -10,8 +11,9 @@ import { AdminScene } from '../admin/admin.scene';
 import { PrismaService } from 'src/database/prisma.service';
 
 @Injectable()
-export class BotUpdate implements OnModuleInit {
+export class BotUpdate implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotUpdate.name);
+  private runHandle: RunnerHandle | null = null;
   constructor(
     private prisma: PrismaService,
     private botService: BotService,
@@ -32,6 +34,16 @@ export class BotUpdate implements OnModuleInit {
   private registerHandlers() {
     const bot = this.botService.getBot();
     this.logger.log('📝 Регистрация обработчиков...');
+
+    // 🔀 Параллельная обработка апдейтов (runner) требует упорядочивания
+    // сообщений в рамках одного чата, чтобы не было гонок состояний (админ-сцены,
+    // антиспам и т.д.). Разные чаты обрабатываются параллельно.
+    bot.use(
+      sequentialize((ctx) => {
+        const id = ctx.chat?.id ?? ctx.from?.id;
+        return id === undefined ? undefined : id.toString();
+      }),
+    );
 
     // ==================== ADMIN COMMANDS ====================
 
@@ -509,19 +521,31 @@ export class BotUpdate implements OnModuleInit {
 
   private async startBot() {
     const bot = this.botService.getBot();
-    this.logger.log('🚀 Запуск бота...');
+    this.logger.log('🚀 Запуск бота (параллельный runner)...');
 
     try {
-      await bot.start({
-        onStart: (botInfo) => {
-          console.log('\n ========================================');
-          console.log(`   BOT STARTED: @${botInfo.username}`);
-          console.log('========================================\n');
-        },
-      });
+      const botInfo = await bot.api.getMe();
+
+      // run() запускает конкурентный long-polling и сразу возвращает управление
+      this.runHandle = run(bot);
+
+      console.log('\n ========================================');
+      console.log(`   BOT STARTED: @${botInfo.username}`);
+      console.log('========================================\n');
     } catch (error) {
       console.error('❌ Ошибка при запуске бота:', error);
       throw error;
+    }
+  }
+
+  async onModuleDestroy() {
+    try {
+      if (this.runHandle?.isRunning()) {
+        await this.runHandle.stop();
+        this.logger.log('🛑 Runner остановлен');
+      }
+    } catch (error) {
+      this.logger.warn('⚠️ Ошибка при остановке runner');
     }
   }
 }

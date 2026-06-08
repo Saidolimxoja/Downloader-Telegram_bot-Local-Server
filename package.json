@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@grammyjs/nestjs": "^0.3.4",
+    "@grammyjs/runner": "^2.0.3",
     "@localzet/grammy-nestjs": "^1.0.2",
     "@mdreal/nestjs-tg-bot": "^0.0.5",
     "@nestjs/bullmq": "^11.0.4",
