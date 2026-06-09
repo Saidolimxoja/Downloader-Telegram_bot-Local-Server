@@ -750,6 +750,63 @@ export class DownloaderService {
         }
       }
 
+      // ⚡ URL-DIRECT (только Instagram): отдаём прямую H.264-ссылку Telegram —
+      // он сам качает её в архивный канал, наш сервер НЕ качает и НЕ заливает.
+      // YouTube сюда не идёт: он привязывает ссылки к IP и троттлит, Telegram их
+      // не заберёт. При любой ошибке проваливаемся в обычное скачивание ниже.
+      if (isInstagram && videoInfo.directUrl) {
+        try {
+          if (progressMsg) {
+            await this.bot.api
+              .editMessageText(
+                chatId,
+                progressMsg.message_id,
+                '⚡ Готовлю видео...',
+              )
+              .catch(() => {});
+          }
+
+          const uploadResult = await this.uploaderService.cacheUrlToChannel(
+            videoInfo.directUrl,
+            videoInfo,
+          );
+
+          await this.bot.api.sendVideo(chatId, uploadResult.fileId, {
+            caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+            supports_streaming: true,
+          });
+
+          // Сохраняем в кэш — повторные запросы будут мгновенными (filepath
+          // пустой: файла на диске нет, fileSize запишется как 0)
+          await this.saveToCache(
+            '',
+            videoInfo,
+            DownloaderService.DIRECT_FORMAT_ID,
+            DownloaderService.DIRECT_RESOLUTION,
+            uploadResult,
+            userId,
+            false,
+          );
+
+          if (progressMsg) {
+            await this.bot.api
+              .deleteMessage(chatId, progressMsg.message_id)
+              .catch(() => {});
+          }
+
+          await this.userService.incrementDownloads(userId).catch(() => {});
+          this.advertisementService.incrementUserDownloads(userId);
+          this.logger.log(`⚡ URL-direct успех: ${videoInfo.id}`);
+          return;
+        } catch (e) {
+          const err = e as Error;
+          this.logger.warn(
+            `⚠️ URL-direct не удался, перехожу к скачиванию: ${err.message}`,
+          );
+          // проваливаемся ниже в обычное скачивание
+        }
+      }
+
       if (progressMsg) {
         // Переиспользуем сообщение «в очереди» под прогресс
         await this.bot.api

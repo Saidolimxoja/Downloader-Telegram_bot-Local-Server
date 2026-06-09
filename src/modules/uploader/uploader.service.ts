@@ -112,6 +112,48 @@ export class UploaderService {
     }
   }
   /**
+   * ⚡ URL-DIRECT: КЕШИРОВАНИЕ ПО ССЫЛКЕ (без скачивания на наш сервер)
+   *
+   * Отдаём Telegram прямую ссылку на готовый H.264-файл — серверы Telegram
+   * скачивают его сами и кладут в архивный канал. Наш сервер НЕ качает и НЕ
+   * заливает. Работает на локальном Bot API сервере (лимит размера снят).
+   * Возвращает { fileId, messageId } для кэша — как и cacheToChannel.
+   */
+  async cacheUrlToChannel(
+    fileUrl: string,
+    info: VideoInfoDto,
+  ): Promise<{ fileId: string; messageId: number }> {
+    if (!this.bot) {
+      throw new Error('Bot instance не установлен. Вызовите setBot() сначала.');
+    }
+
+    this.logger.log(`⚡ URL-direct: отдаю ссылку Telegram на скачивание`);
+
+    // fileUrl передаём строкой — Telegram сам скачает по ссылке.
+    // Превью генерировать не нужно: Telegram создаст его автоматически.
+    const message: any = await this.bot.api.sendVideo(
+      this.archiveChannelId,
+      fileUrl,
+      {
+        supports_streaming: true,
+        duration: info.duration,
+        width: info.width,
+        height: info.height,
+        caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+        parse_mode: 'HTML',
+      },
+    );
+
+    const fileId: string | undefined = message.video?.file_id;
+    if (!fileId) {
+      throw new Error('URL-direct: не удалось получить file_id из ответа');
+    }
+
+    this.logger.log(`✅ URL-direct закеширован. MessageID: ${message.message_id}`);
+    return { fileId, messageId: message.message_id };
+  }
+
+  /**
    * 🧹 ОЧИСТКА ФАЙЛОВ
    */
   private async cleanup(

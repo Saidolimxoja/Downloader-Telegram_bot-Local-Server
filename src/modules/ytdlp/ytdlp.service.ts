@@ -63,6 +63,7 @@ export class YtdlpService {
         thumbnail: data.thumbnail || '',
         width: data.width || 0,
         height: data.height || 0,
+        directUrl: this.findProgressiveUrl(data.formats || []),
         formats: this.getBestFormats(data.formats || []),
       };
     } catch (error: any) {
@@ -72,6 +73,26 @@ export class YtdlpService {
       this.logger.error(`❌ Ошибка getVideoInfo: ${details.substring(0, 500)}`);
       throw new Error(details || 'Видео недоступно или ссылка неверна.');
     }
+  }
+
+  /**
+   * 1.5️⃣ ПРЯМАЯ ССЫЛКА НА ГОТОВЫЙ ФАЙЛ (для URL-direct)
+   *
+   * Прогрессивный (муксированный) формат — единственный, где видео и звук уже
+   * в одном файле. У Instagram это формат с id «2»: и vcodec, и acodec там
+   * undefined (а не 'none', как у DASH-дорожек). Именно его серверы Telegram
+   * могут скачать сами по ссылке, минуя наш сервер. Возвращаем его url или null.
+   */
+  private findProgressiveUrl(formats: any[]): string | undefined {
+    const progressive = formats.find(
+      (f) =>
+        f.url &&
+        f.vcodec !== 'none' &&
+        f.acodec !== 'none' &&
+        f.protocol !== 'm3u8' &&
+        f.protocol !== 'm3u8_native',
+    );
+    return progressive?.url || undefined;
   }
 
   /**

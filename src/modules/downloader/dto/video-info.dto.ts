@@ -10,6 +10,7 @@ export class VideoInfoDto {
   thumbnail: string;
   width?: number;        // 🆕 Ширина видео
   height?: number;       // 🆕 Высота видео
+  directUrl?: string;    // 🆕 Прямая ссылка на готовый H.264-файл (URL-direct)
   formats: FormatDto[];
 }
 
