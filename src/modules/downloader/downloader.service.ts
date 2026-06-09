@@ -790,6 +790,17 @@ export class DownloaderService {
         },
       );
 
+      // 🍏 Гарантируем совместимость с iPhone (перекод в H.264/yuv420p,
+      // только если нужно — иначе вернёт тот же файл мгновенно)
+      await this.bot.api
+        .editMessageText(
+          chatId,
+          progressMsg.message_id,
+          '🔄 Обрабатываю видео...',
+        )
+        .catch(() => {});
+      await this.ytdlpService.ensureIphoneCompatible(filepath);
+
       await this.bot.api
         .editMessageText(
           chatId,

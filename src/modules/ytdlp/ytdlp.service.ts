@@ -307,6 +307,105 @@ export class YtdlpService {
   }
 
   /**
+   * 5️⃣ СОВМЕСТИМОСТЬ С iPhone
+   *
+   * iOS проигрывает видео только аппаратным декодером: H.264 (avc1) 8-бит
+   * yuv420p, профиль не выше High, + аудио AAC. Если поток в VP9/AV1/HEVC,
+   * либо H.264 с 10-битным/4:2:2/4:4:4 цветом — на айфоне «звук есть, кадр
+   * замирает». Проверяем файл через ffprobe и перекодируем ТОЛЬКО если он
+   * несовместим (чтобы не жечь CPU на уже корректных видео).
+   *
+   * Возвращает путь к совместимому файлу (тот же, если перекод не нужен).
+   */
+  async ensureIphoneCompatible(videoPath: string): Promise<string> {
+    try {
+      // Узнаём кодек, пиксельный формат и профиль видеопотока
+      const { stdout } = await execFileAsync('ffprobe', [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=codec_name,pix_fmt,profile',
+        '-of',
+        'json',
+        videoPath,
+      ]);
+
+      const info = JSON.parse(stdout);
+      const stream = info?.streams?.[0] ?? {};
+      const codec = String(stream.codec_name || '').toLowerCase();
+      const pixFmt = String(stream.pix_fmt || '').toLowerCase();
+      const profile = String(stream.profile || '').toLowerCase();
+
+      // 10-битные/4:2:2/4:4:4 профили H.264 айфон не декодирует
+      const badProfile =
+        profile.includes('10') ||
+        profile.includes('4:2:2') ||
+        profile.includes('4:4:4');
+
+      const isCompatible =
+        codec === 'h264' && pixFmt === 'yuv420p' && !badProfile;
+
+      if (isCompatible) {
+        this.logger.debug(
+          `🍏 Видео уже совместимо (h264/${pixFmt}/${profile}), перекод не нужен`,
+        );
+        return videoPath;
+      }
+
+      this.logger.log(
+        `🔄 Перекодирую для iPhone (было: ${codec}/${pixFmt}/${profile})`,
+      );
+
+      const fixedPath = videoPath.replace(/\.mp4$/i, '') + '_ios.mp4';
+
+      await execFileAsync(
+        'ffmpeg',
+        [
+          '-y',
+          '-i',
+          videoPath,
+          '-c:v',
+          'libx264',
+          '-profile:v',
+          'high',
+          '-pix_fmt',
+          'yuv420p',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-movflags',
+          '+faststart',
+          fixedPath,
+        ],
+        { timeout: 5 * 60 * 1000 },
+      );
+
+      if (existsSync(fixedPath)) {
+        // Заменяем исходник перекодированным «на месте» — путь к файлу не
+        // меняется, поэтому превью (.jpg), кеш и загрузка работают как прежде
+        await this.safeDelete(videoPath);
+        fs.renameSync(fixedPath, videoPath);
+        this.logger.log(`✅ Перекод готов: ${videoPath}`);
+        return videoPath;
+      }
+
+      this.logger.warn('⚠️ Перекод не создал файл — отдаю оригинал');
+      return videoPath;
+    } catch (error: any) {
+      // При любой ошибке ffprobe/ffmpeg не валим загрузку — отдаём оригинал
+      this.logger.warn(`⚠️ Проверка совместимости не удалась: ${error.message}`);
+      return videoPath;
+    }
+  }
+
+  /**
    * 6️⃣ ОЧИСТКА ИМЕНИ ФАЙЛА
    */
   private sanitizeFilename(filename: string): string {
