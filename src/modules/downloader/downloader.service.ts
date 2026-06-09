@@ -767,11 +767,23 @@ export class DownloaderService {
       const filename = `${sanitizedTitle}_${suffix}.mp4`;
       const filepath = path.resolve(this.downloadsDir, filename);
 
+      // Скачиваем сразу в H.264 (avc1) — он играет везде, включая iPhone, и
+      // НЕ требует перекодирования. Порядок предпочтений:
+      //  1) готовый единый H.264-файл (видео+звук) — быстрее всего, без merge
+      //  2) H.264-видео + AAC-аудио раздельно (склейка без перекода)
+      //  3) H.264-видео + любое аудио
+      //  4) что угодно (сработает страховочный перекод в ensureIphoneCompatible)
+      const iosFormat =
+        'best[vcodec^=avc1]/' +
+        'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/' +
+        'bestvideo[vcodec^=avc1]+bestaudio/' +
+        'bestvideo+bestaudio/best';
+
       // Скачиваем лучшее качество
       let lastProgressBucket = -1;
       await this.ytdlpService.downloadVideo(
         videoInfo.url,
-        'bestvideo+bestaudio/best',
+        iosFormat,
         filepath,
         false,
         async (progress) => {
