@@ -767,14 +767,16 @@ export class DownloaderService {
       const filename = `${sanitizedTitle}_${suffix}.mp4`;
       const filepath = path.resolve(this.downloadsDir, filename);
 
-      // Скачиваем сразу в H.264 (avc1) — он играет везде, включая iPhone, и
-      // НЕ требует перекодирования. Порядок предпочтений:
-      //  1) готовый единый H.264-файл (видео+звук) — быстрее всего, без merge
+      // 🚀 Как большие боты отдают reels/shorts за секунду: берут ГОТОВЫЙ
+      // прогрессивный файл (видео+звук в одном), который Instagram/YouTube сразу
+      // отдают в H.264 — он играет на iPhone и НЕ требует перекода. Гонимся за
+      // скоростью, а не за максимальным разрешением. Порядок предпочтений:
+      //  1) best — готовый муксированный H.264-файл (мгновенно, без склейки)
       //  2) H.264-видео + AAC-аудио раздельно (склейка без перекода)
       //  3) H.264-видео + любое аудио
       //  4) что угодно (сработает страховочный перекод в ensureIphoneCompatible)
       const iosFormat =
-        'best[vcodec^=avc1]/' +
+        'best/' +
         'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/' +
         'bestvideo[vcodec^=avc1]+bestaudio/' +
         'bestvideo+bestaudio/best';
