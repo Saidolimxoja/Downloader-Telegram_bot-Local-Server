@@ -153,6 +153,13 @@ export class DownloaderService {
           }
         }
 
+        // Сначала отправляем уведомление, чтобы получить его message_id —
+        // воркер переиспользует это сообщение под прогресс и удалит его, когда
+        // видео отправлено (одно «живое» сообщение вместо висящего навсегда).
+        const queueMsg = await ctx.reply(
+          '📥 Видео добавлено в очередь!\n⏳ Я пришлю его, как только оно будет готово.',
+        );
+
         // Иначе — в очередь (НЕ блокируем бота на время скачивания)
         await this.downloadQueue.add(
           'download-task',
@@ -162,16 +169,13 @@ export class DownloaderService {
             videoData: videoInfo,
             isDirect: true,
             isInstagram,
+            queueMsgId: queueMsg.message_id,
           },
           {
             attempts: 3,
             backoff: 5000,
             removeOnComplete: true,
           },
-        );
-
-        await ctx.reply(
-          '📥 Видео добавлено в очередь!\n⏳ Я пришлю его, как только оно будет готово.',
         );
         return;
       }
@@ -705,8 +709,11 @@ export class DownloaderService {
     userId: bigint,
     videoInfo: VideoInfoDto,
     isInstagram: boolean,
+    queueMsgId?: number,
   ): Promise<void> {
-    let progressMsg: any = null;
+    // Переиспользуем сообщение «📥 в очереди»: оно превратится в прогресс
+    // скачивания и будет удалено в конце. Если id не пришёл — создадим новое.
+    let progressMsg: any = queueMsgId ? { message_id: queueMsgId } : null;
 
     try {
       // 1️⃣ ПРОВЕРКА КЕША — на случай, если видео закешировали, пока задача ждала
@@ -724,6 +731,11 @@ export class DownloaderService {
             caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
             supports_streaming: true,
           });
+          if (progressMsg) {
+            await this.bot.api
+              .deleteMessage(chatId, progressMsg.message_id)
+              .catch(() => {});
+          }
           await this.cacheService
             .recordCacheHit(cached.id, userId)
             .catch(() => {});
@@ -738,7 +750,17 @@ export class DownloaderService {
         }
       }
 
-      progressMsg = await this.bot.api.sendMessage(chatId, '⬇️ Скачиваю видео...');
+      if (progressMsg) {
+        // Переиспользуем сообщение «в очереди» под прогресс
+        await this.bot.api
+          .editMessageText(chatId, progressMsg.message_id, '⬇️ Скачиваю видео...')
+          .catch(() => {});
+      } else {
+        progressMsg = await this.bot.api.sendMessage(
+          chatId,
+          '⬇️ Скачиваю видео...',
+        );
+      }
 
       const sanitizedTitle = sanitizeFilename(videoInfo.title);
       const suffix = isInstagram ? 'ig' : 'short';

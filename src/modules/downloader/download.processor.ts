@@ -27,6 +27,7 @@ export class DownloadProcessor extends WorkerHost {
       isAudio,
       isInstagram,
       isDirect,
+      queueMsgId,
     } = job.data;
 
     try {
@@ -37,6 +38,7 @@ export class DownloadProcessor extends WorkerHost {
           BigInt(userId),
           videoData,
           isInstagram,
+          queueMsgId,
         );
       } else {
         // Обычное скачивание с выбранным качеством

@@ -180,7 +180,14 @@ export class YtdlpService {
         args.push('--write-thumbnail');
         args.push('--convert-thumbnail', 'jpg');
       } else {
-        args.push('-f', `${formatId}+bestaudio/best`);
+        // 🍏 iPhone проигрывает только H.264 (avc1) + AAC. VP9/AV1 на айфоне
+        // дают «звук есть, обложка есть, картинки нет». --format-sort заставляет
+        // yt-dlp среди равных по качеству форматов предпочитать H.264/AAC.
+        // Если formatId уже содержит готовый селектор ('+' или 'best',
+        // как в прямом скачивании) — используем его как есть, иначе достраиваем.
+        const hasSelector = /\+|best/.test(formatId);
+        args.push('-f', hasSelector ? formatId : `${formatId}+bestaudio/best`);
+        args.push('-S', 'vcodec:h264,acodec:aac');
         args.push('--merge-output-format', 'mp4');
         args.push('--ppa', 'ffmpeg:-movflags +faststart');
         args.push('--write-thumbnail');
