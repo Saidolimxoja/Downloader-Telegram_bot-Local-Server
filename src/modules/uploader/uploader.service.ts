@@ -1,29 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Context, InputFile, Bot } from 'grammy';
+import { InputFile, Bot } from 'grammy';
 import { YtdlpService } from '../ytdlp/ytdlp.service';
 import { VideoInfoDto } from '../downloader/dto/video-info.dto';
 import { ConfigService } from '@nestjs/config';
 import * as path from 'path';
+
 @Injectable()
 export class UploaderService {
   private readonly logger = new Logger(UploaderService.name);
   private readonly archiveChannelId: string;
-  private bot: Bot | null = null; // Изначально бот не установлен
+  private bot: Bot | null = null;
+
   constructor(
     private ytdlpService: YtdlpService,
     private config: ConfigService,
   ) {
-    // Получаем bot instance из глобального контекста или инжектим
     this.archiveChannelId = this.config.get<string>('CHANNEL_ID') || '';
   }
 
-  
-
-  // Метод для установки бота (вызывается из BotModule)
   setBot(bot: Bot) {
     this.bot = bot;
     this.logger.log(`🔧 setBot вызван. Bot defined: ${!!bot}`);
-    this.logger.log(`🔧 UploaderService instance ID: ${Math.random()}`);
   }
 
   /**
@@ -47,6 +44,9 @@ export class UploaderService {
       let message: any;
       let thumbnailPath: string | null | undefined;
 
+      // Генерируем красивый и БЕЗОПАСНЫЙ caption
+      const captionText = this.formatCaption(info);
+
       if (isAudio) {
         thumbnailPath = this.ytdlpService.getThumbnailPath(videoPath);
         message = await this.bot.api.sendAudio(
@@ -56,7 +56,8 @@ export class UploaderService {
             title: info.title,
             performer: info.uploader,
             duration: info.duration,
-            caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+            caption: captionText,
+            parse_mode: 'HTML', // Добавлено, чтобы работал formatCaption
             thumbnail: thumbnailPath
               ? new InputFile(path.resolve(thumbnailPath))
               : undefined,
@@ -72,7 +73,7 @@ export class UploaderService {
             duration: info.duration,
             width: info.width,
             height: info.height,
-            caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+            caption: captionText, // Используем полную карточку
             thumbnail: thumbnailPath
               ? new InputFile(path.resolve(thumbnailPath))
               : undefined,
@@ -81,16 +82,14 @@ export class UploaderService {
         );
       }
 
-      let fileId: string | undefined;
-
-      if (isAudio && message.audio) {
-        fileId = message.audio.file_id;
-      } else if (!isAudio && message.video) {
-        fileId = message.video.file_id;
-      }
+      let fileId: string | undefined = isAudio
+        ? message.audio?.file_id
+        : message.video?.file_id;
 
       if (!fileId) {
-        this.logger.error(`❌ Не удалось получить file_id. Тип: ${isAudio ? 'audio' : 'video'}, Ответ: ${JSON.stringify(message)}`);
+        this.logger.error(
+          `❌ Не удалось получить file_id. Ответ: ${JSON.stringify(message)}`,
+        );
         throw new Error('Не удалось получить file_id из ответа Telegram API');
       }
 
@@ -101,23 +100,15 @@ export class UploaderService {
       this.logger.log(
         `✅ Закешировано успешно. MessageID: ${message.message_id}`,
       );
-
-      return {
-        fileId,
-        messageId: message.message_id,
-      };
+      return { fileId, messageId: message.message_id };
     } catch (error: any) {
       this.logger.error(`❌ Ошибка кеширования: ${error.message}`);
       throw error;
     }
   }
+
   /**
-   * ⚡ URL-DIRECT: КЕШИРОВАНИЕ ПО ССЫЛКЕ (без скачивания на наш сервер)
-   *
-   * Отдаём Telegram прямую ссылку на готовый H.264-файл — серверы Telegram
-   * скачивают его сами и кладут в архивный канал. Наш сервер НЕ качает и НЕ
-   * заливает. Работает на локальном Bot API сервере (лимит размера снят).
-   * Возвращает { fileId, messageId } для кэша — как и cacheToChannel.
+   * ⚡ URL-DIRECT: КЕШИРОВАНИЕ ПО ССЫЛКЕ
    */
   async cacheUrlToChannel(
     fileUrl: string,
@@ -129,8 +120,8 @@ export class UploaderService {
 
     this.logger.log(`⚡ URL-direct: отдаю ссылку Telegram на скачивание`);
 
-    // fileUrl передаём строкой — Telegram сам скачает по ссылке.
-    // Превью генерировать не нужно: Telegram создаст его автоматически.
+    const captionText = this.formatCaption(info);
+
     const message: any = await this.bot.api.sendVideo(
       this.archiveChannelId,
       fileUrl,
@@ -139,7 +130,7 @@ export class UploaderService {
         duration: info.duration,
         width: info.width,
         height: info.height,
-        caption: this.escapeHtml(`✅ ${info.title}\n👤 ${info.uploader}`),
+        caption: captionText, // Заменили на безопасный форматированный текст
         parse_mode: 'HTML',
       },
     );
@@ -149,84 +140,71 @@ export class UploaderService {
       throw new Error('URL-direct: не удалось получить file_id из ответа');
     }
 
-    this.logger.log(`✅ URL-direct закеширован. MessageID: ${message.message_id}`);
+    this.logger.log(
+      `✅ URL-direct закеширован. MessageID: ${message.message_id}`,
+    );
     return { fileId, messageId: message.message_id };
   }
 
   /**
-   * 🧹 ОЧИСТКА ФАЙЛОВ
+   * 📝 ФОРМАТИРОВАНИЕ CAPTION (Сделан PUBLIC и добавлен ESCAPE)
    */
-  private async cleanup(
-    videoPath: string,
-    thumbnailPath?: string | null,
-  ): Promise<void> {
-    await this.ytdlpService.safeDelete(videoPath);
-    if (thumbnailPath) {
-      await this.ytdlpService.safeDelete(thumbnailPath);
-    }
-  }
+  public formatCaption(info: VideoInfoDto): string {
+    // Обязательно экранируем динамические данные от площадок!
+    const cleanTitle = this.escapeHtml(info.title || 'Без названия');
+    const cleanUploader = this.escapeHtml(info.uploader || 'Неизвестно');
 
-  /**
-   * 📝 ФОРМАТИРОВАНИЕ CAPTION
-   */
-  private formatCaption(info: VideoInfoDto): string {
-    const views = this.formatNumber(info.viewCount);
-    const likes = this.formatNumber(info.likeCount);
+    const views = this.formatNumber(info.viewCount || 0);
+    const likes = this.formatNumber(info.likeCount || 0);
     const date = this.formatDate(info.uploadDate);
-    const duration = this.formatDuration(info.duration);
+    const duration = this.formatDuration(info.duration || 0);
 
-    return `
-🎬 <b>${info.title}</b>
-
-👁 ${views} • 👍 ${likes}
-📥 ${date} • 🕒 ${duration}
-👤 ${info.uploader}
-    `.trim();
+    return [
+      `🎬 <b>${cleanTitle}</b>`,
+      '',
+      `👁 ${views} • 👍 ${likes}`,
+      `📥 ${date} • 🕒 ${duration}`,
+      `👤 ${cleanUploader}`,
+    ]
+      .join('\n')
+      .trim();
   }
 
   /**
    * 🛡️ ЭКРАНИРОВАНИЕ HTML
-   * КРИТИЧНО для работы parse_mode: 'HTML'
    */
   private escapeHtml(text: string): string {
+    if (!text) return '';
     return text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
   }
 
-  /**
-   * 🔢 ФОРМАТИРОВАНИЕ ЧИСЕЛ
-   */
   private formatNumber(num: number): string {
+    if (!num) return '0';
     if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
     if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
     return num.toString();
   }
 
-  /**
-   * 📅 ФОРМАТИРОВАНИЕ ДАТЫ
-   */
   private formatDate(dateStr: string): string {
     if (!dateStr || dateStr.length !== 8) return 'N/A';
-
     const year = dateStr.substring(0, 4);
     const month = dateStr.substring(4, 6);
     const day = dateStr.substring(6, 8);
-
     return `${day}.${month}.${year}`;
   }
 
-  /**
-   * ⏱️ ФОРМАТИРОВАНИЕ ДЛИТЕЛЬНОСТИ
-   */
   private formatDuration(seconds: number): string {
+    if (!seconds) return '0:00';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = seconds % 60;
 
-    if (h > 0)
+    if (h > 0) {
       return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 }
