@@ -85,7 +85,20 @@ export class DownloaderService {
     let progressMsg;
     if (url.includes('instagram.com/stories/')) {
       await ctx.reply(
-        '🚫 Instagram Stories скачать нельзя.\n\nПопробуй обычные посты или Reels.',
+        '🚫 Instagram Stories скачать нельзя.\n\nПопробуй Reels.',
+      );
+      return;
+    }
+
+    // Instagram фото / карусели — бот качает только видео (Reels)
+    if (
+      url.includes('instagram.com') &&
+      !url.includes('/reel/') &&
+      !url.includes('/reels/') &&
+      !url.includes('/tv/')
+    ) {
+      await ctx.reply(
+        '📷 Я качаю только видео (Reels).\n\nФото и карусели не поддерживаю.',
       );
       return;
     }

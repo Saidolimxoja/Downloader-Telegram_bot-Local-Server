@@ -244,6 +244,14 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
     // ==================== USER COMMANDS ====================
 
     bot.command('start', async (ctx) => {
+
+      if (ctx.chat?.type !== 'private') {
+        // В группе просто подтверждаем работу, без проверок подписки
+        await ctx.reply('👋 Ассаламу Алайкум! Я готов качать видео в этой группе. Кидайте ссылки!');
+        return;
+      }
+
+
       const startTime = Date.now();
       this.logger.log(
         `📥 /start от пользователя ${ctx.from?.id} - ${ctx.from?.username} - ${ctx.from?.first_name}`,
@@ -423,6 +431,37 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
 
       if (!userId || !text) return;
 
+      const isGroup =
+        ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
+      // ========== ГРУППЫ: только обработка ссылок ==========
+      if (isGroup) {
+        // В группах не нужны админ-сцены, подписки, бан-листы.
+        // Просто ищем ссылки YouTube / Instagram и скачиваем.
+        if (text.startsWith('/')) return; // Команды игнорируем
+
+        const urls = this.extractSupportedUrls(text);
+        if (urls.length === 0) return; // Нет подходящих ссылок — молчим
+
+        this.logger.log(
+          `📥 [ГРУППА ${ctx.chat.id}] Ссылки от ${userId}: ${urls.join(', ')}`,
+        );
+
+        for (const url of urls) {
+          try {
+            await this.downloaderService.handleUrl(ctx, url);
+          } catch (error) {
+            this.logger.error(
+              `❌ Ошибка при обработке ссылки в группе: ${url}`,
+              error,
+            );
+          }
+        }
+        return;
+      }
+
+      // ========== ПРИВАТНЫЙ ЧАТ: полная логика ==========
+
       // Проверяем состояние для создания объявления
       const state = this.adminScene.getState(userId);
 
@@ -547,5 +586,24 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.warn('⚠️ Ошибка при остановке runner');
     }
+  }
+
+  /**
+   * 🔗 Извлекает из текста все ссылки YouTube / Instagram.
+   * Работает даже если ссылка вставлена в середине сообщения.
+   */
+  private extractSupportedUrls(text: string): string[] {
+    const urlRegex = /https?:\/\/[^\s]+/gi;
+    const allUrls = text.match(urlRegex) || [];
+
+    const supportedDomains = [
+      'youtube.com',
+      'youtu.be',
+      'instagram.com',
+    ];
+
+    return allUrls.filter((url) =>
+      supportedDomains.some((domain) => url.includes(domain)),
+    );
   }
 }
