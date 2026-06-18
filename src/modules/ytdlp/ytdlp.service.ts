@@ -197,6 +197,8 @@ export class YtdlpService {
 
       if (isAudio) {
         args.push('-f', formatId || 'bestaudio/best');
+        args.push('-x');
+        args.push('--audio-format', 'm4a');
         args.push('--write-thumbnail');
         args.push('--convert-thumbnail', 'jpg');
       } else {
