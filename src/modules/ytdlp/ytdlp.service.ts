@@ -196,7 +196,7 @@ export class YtdlpService {
       }
 
       if (isAudio) {
-        args.push('-f', 'bestaudio/best');
+        args.push('-f', formatId || 'bestaudio/best');
         args.push('--write-thumbnail');
         args.push('--convert-thumbnail', 'jpg');
       } else {
