@@ -108,6 +108,7 @@ export class YtdlpService {
       const size = f.filesize ?? f.filesize_approx ?? 0;
       const tbr = f.tbr ?? 0;
       const height = f.height ?? 0;
+      const ext = f.ext ?? '';
 
       // hasVideo — есть height И vcodec не 'none' (или vcodec пустой но есть height)
       const hasVideo = height > 0 && vcodec !== 'none';
@@ -115,9 +116,10 @@ export class YtdlpService {
 
       // 🎵 АУДИО
       if (!hasVideo && hasAudio) {
+        const isNative = ext === 'm4a' || ext === 'mp3' || acodec.includes('mp4a') || acodec.includes('aac');
         audioFormats.push({
           formatId: f.format_id,
-          ext: 'm4a',
+          ext: isNative ? 'm4a' : (ext || 'webm'),
           resolution: 'audio',
           filesize: size,
           quality: tbr,
@@ -154,7 +156,13 @@ export class YtdlpService {
       (a, b) => b.quality - a.quality,
     );
 
-    const bestAudio = audioFormats.sort((a, b) => b.quality - a.quality)[0];
+    const bestAudio = audioFormats.sort((a, b) => {
+      const aIsM4a = a.ext === 'm4a';
+      const bIsM4a = b.ext === 'm4a';
+      if (aIsM4a && !bIsM4a) return -1;
+      if (!aIsM4a && bIsM4a) return 1;
+      return b.quality - a.quality;
+    })[0];
     if (bestAudio) sortedVideos.push(bestAudio);
 
     this.logger.debug(
