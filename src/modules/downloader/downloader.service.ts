@@ -483,14 +483,14 @@ export class DownloaderService {
       const sanitizedTitle = sanitizeFilename(videoData.title);
       const fileExt = isAudio ? 'm4a' : 'mp4';
       const filename = `${sanitizedTitle}_${formatId}.${fileExt}`;
-      const filepath = path.resolve(this.downloadsDir, filename);
+      let filepath = path.resolve(this.downloadsDir, filename);
 
       // YouTube URL или Instagram URL
       const sourceUrl = videoData.url;
 
       // 2️⃣ СКАЧИВАНИЕ (yt-dlp)
       let lastProgressBucket = -1;
-      await this.ytdlpService.downloadVideo(
+      filepath = await this.ytdlpService.downloadVideo(
         sourceUrl,
         formatId,
         filepath,
@@ -835,7 +835,7 @@ export class DownloaderService {
       const sanitizedTitle = sanitizeFilename(videoInfo.title);
       const suffix = isInstagram ? 'ig' : 'short';
       const filename = `${sanitizedTitle}_${suffix}.mp4`;
-      const filepath = path.resolve(this.downloadsDir, filename);
+      let filepath = path.resolve(this.downloadsDir, filename);
 
       // 🚀 Как большие боты отдают reels/shorts за секунду: берут ГОТОВЫЙ
       // прогрессивный файл (видео+звук в одном), который Instagram/YouTube сразу
@@ -853,7 +853,7 @@ export class DownloaderService {
 
       // Скачиваем лучшее качество
       let lastProgressBucket = -1;
-      await this.ytdlpService.downloadVideo(
+      filepath = await this.ytdlpService.downloadVideo(
         videoInfo.url,
         iosFormat,
         filepath,
