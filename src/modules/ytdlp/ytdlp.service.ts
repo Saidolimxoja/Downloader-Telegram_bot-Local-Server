@@ -51,20 +51,98 @@ export class YtdlpService {
 
       const data = JSON.parse(stdout);
 
+      let formats = data.formats || [];
+      let directUrl = this.findProgressiveUrl(formats);
+      let thumbnail = data.thumbnail || '';
+      let duration = data.duration || 0;
+      let width = data.width || 0;
+      let height = data.height || 0;
+      let uploader = data.uploader || data.channel || 'Unknown';
+
+      let entries: any[] | undefined = undefined;
+
+      if (data._type === 'playlist' && data.entries && data.entries.length > 0) {
+        const entry = data.entries[0];
+        thumbnail = entry.thumbnail || entry.thumbnails?.[0]?.url || thumbnail;
+        duration = entry.duration || duration;
+        width = entry.width || width;
+        height = entry.height || height;
+        uploader = entry.uploader || entry.channel || data.playlist_uploader || uploader;
+
+        if (entry.formats && entry.formats.length > 0) {
+          formats = entry.formats;
+        } else if (entry.url) {
+          formats = [
+            {
+              format_id: entry.format_id || 'best',
+              url: entry.url,
+              ext: entry.ext || 'mp4',
+              width: entry.width,
+              height: entry.height,
+              vcodec: entry.vcodec || 'h264',
+              acodec: entry.acodec || 'aac',
+              filesize: entry.filesize || entry.filesize_approx || 0,
+            },
+          ];
+        }
+        directUrl = this.findProgressiveUrl(formats) || entry.url;
+
+        // Map all entries in the playlist (filtering to only include video entries)
+        entries = data.entries
+          .filter((ent: any) => {
+            const ext = (ent.ext || '').toLowerCase();
+            const entUrl = (ent.url || '').toLowerCase();
+            return ext === 'mp4' || entUrl.includes('.mp4');
+          })
+          .map((ent: any) => {
+            let entFormats = ent.formats || [];
+            if (!entFormats.length && ent.url) {
+              entFormats = [
+                {
+                  format_id: ent.format_id || 'best',
+                  url: ent.url,
+                  ext: ent.ext || 'mp4',
+                  width: ent.width,
+                  height: ent.height,
+                  vcodec: ent.vcodec || 'h264',
+                  acodec: ent.acodec || 'aac',
+                  filesize: ent.filesize || ent.filesize_approx || 0,
+                },
+              ];
+            }
+            return {
+              id: ent.id,
+              url: ent.url || url,
+              title: this.sanitizeFilename(ent.title || data.title || 'Video'),
+              uploader: ent.uploader || ent.channel || data.playlist_uploader || uploader,
+              duration: ent.duration || 0,
+              viewCount: ent.view_count || 0,
+              likeCount: ent.like_count || 0,
+              uploadDate: ent.upload_date || '',
+              thumbnail: ent.thumbnail || ent.thumbnails?.[0]?.url || '',
+              width: ent.width || 0,
+              height: ent.height || 0,
+              directUrl: this.findProgressiveUrl(entFormats) || ent.url,
+              formats: this.getBestFormats(entFormats),
+            };
+          });
+      }
+
       return {
         id: data.id,
         url: data.webpage_url || url,
-        title: this.sanitizeFilename(data.title),
-        uploader: data.uploader || data.channel || 'Unknown',
-        duration: data.duration || 0,
+        title: this.sanitizeFilename(data.title || data.id || 'Video'),
+        uploader: uploader,
+        duration: duration,
         viewCount: data.view_count || 0,
         likeCount: data.like_count || 0,
         uploadDate: data.upload_date || '',
-        thumbnail: data.thumbnail || '',
-        width: data.width || 0,
-        height: data.height || 0,
-        directUrl: this.findProgressiveUrl(data.formats || []),
-        formats: this.getBestFormats(data.formats || []),
+        thumbnail: thumbnail,
+        width: width,
+        height: height,
+        directUrl: directUrl,
+        formats: this.getBestFormats(formats),
+        entries: entries,
       };
     } catch (error: any) {
       // Пробрасываем реальный текст ошибки yt-dlp, чтобы вызывающий код мог
