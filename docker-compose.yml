@@ -50,6 +50,7 @@ services:
         condition: service_healthy
     volumes:
       - ./downloads:/app/downloads
+      - ./youtube_cookies.txt:/app/youtube_cookies.txt
     ports:
       - "3000:3000"
     networks:
