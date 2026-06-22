@@ -12,6 +12,7 @@ export class VideoInfoDto {
   height?: number;       // 🆕 Высота видео
   directUrl?: string;    // 🆕 Прямая ссылка на готовый H.264-файл (URL-direct)
   formats: FormatDto[];
+  entries?: VideoInfoDto[]; // 🆕 Дополнительные элементы для каруселей / плейлистов
 }
 
 export class FormatDto {

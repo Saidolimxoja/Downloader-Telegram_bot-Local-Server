@@ -95,7 +95,8 @@ export class DownloaderService {
       url.includes('instagram.com') &&
       !url.includes('/reel/') &&
       !url.includes('/reels/') &&
-      !url.includes('/tv/')
+      !url.includes('/tv/') &&
+      !url.includes('/p/')
     ) {
       await ctx.reply(
         '📷 Я качаю только видео (Reels).\n\nФото и карусели не поддерживаю.',
@@ -740,10 +741,20 @@ export class DownloaderService {
       if (cached) {
         this.logger.log(`🎯 Cache HIT (direct): ${videoInfo.id}`);
         try {
-          await this.bot.api.sendVideo(chatId, cached.fileId, {
-            caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
-            supports_streaming: true,
-          });
+          if (cached.fileId.includes(',')) {
+            const fileIds = cached.fileId.split(',');
+            const mediaGroup = fileIds.map((fId: any, idx: number) => ({
+              type: 'video' as const,
+              media: fId,
+              caption: idx === 0 ? `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}` : undefined,
+            }));
+            await this.bot.api.sendMediaGroup(chatId, mediaGroup);
+          } else {
+            await this.bot.api.sendVideo(chatId, cached.fileId, {
+              caption: `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}`,
+              supports_streaming: true,
+            });
+          }
           if (progressMsg) {
             await this.bot.api
               .deleteMessage(chatId, progressMsg.message_id)
@@ -761,6 +772,139 @@ export class DownloaderService {
             `⚠️ FileID из кеша протух, скачиваю заново: ${err.message}`,
           );
         }
+      }
+
+      // 📦 МНОЖЕСТВЕННАЯ ЗАГРУЗКА (КАРУСЕЛЬ/АЛЬБОМ)
+      if (isInstagram && videoInfo.entries && videoInfo.entries.length > 1) {
+        if (progressMsg) {
+          await this.bot.api
+            .editMessageText(
+              chatId,
+              progressMsg.message_id,
+              `⬇️ Загружаю альбом (${videoInfo.entries.length} видео)...`,
+            )
+            .catch(() => {});
+        }
+
+        const fileIds: string[] = [];
+        let totalSize = 0n;
+
+        for (let i = 0; i < videoInfo.entries.length; i++) {
+          const entry = videoInfo.entries[i];
+
+          if (progressMsg) {
+            await this.bot.api
+              .editMessageText(
+                chatId,
+                progressMsg.message_id,
+                `⬇️ Загружаю видео ${i + 1} из ${videoInfo.entries.length}...`,
+              )
+              .catch(() => {});
+          }
+
+          // Проверяем индивидуальный кеш для конкретного видео
+          const entryCached = await this.cacheService.get(
+            entry.id,
+            DownloaderService.DIRECT_FORMAT_ID,
+            DownloaderService.DIRECT_RESOLUTION,
+          );
+
+          if (entryCached) {
+            fileIds.push(entryCached.fileId);
+            totalSize += entryCached.fileSize || 0n;
+            continue;
+          }
+
+          // Иначе качаем
+          const sanitizedTitle = sanitizeFilename(entry.title);
+          const filename = `${sanitizedTitle}_ig_${entry.id}.mp4`;
+          let filepath = path.resolve(this.downloadsDir, filename);
+
+          const iosFormat =
+            'best/' +
+            'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/' +
+            'bestvideo[vcodec^=avc1]+bestaudio/' +
+            'bestvideo+bestaudio/best';
+
+          filepath = await this.ytdlpService.downloadVideo(
+            entry.url,
+            iosFormat,
+            filepath,
+            false,
+            () => {}, // Без прогресс-бара для каждого, чтобы не флудить
+          );
+
+          await this.ytdlpService.ensureIphoneCompatible(filepath);
+
+          // Загружаем в архивный канал
+          const uploadResult = await this.uploaderService.cacheToChannel(
+            filepath,
+            entry,
+            false,
+          );
+
+          const fileStats = await fs.stat(filepath).catch(() => ({ size: 0 }));
+          totalSize += BigInt(fileStats.size);
+
+          // Кешируем индивидуально
+          await this.saveToCache(
+            filepath,
+            entry,
+            DownloaderService.DIRECT_FORMAT_ID,
+            DownloaderService.DIRECT_RESOLUTION,
+            uploadResult,
+            userId,
+            false,
+          );
+
+          fileIds.push(uploadResult.fileId);
+          await this.cleanupFiles(filepath);
+        }
+
+        // Отправляем как альбом (Media Group)
+        const mediaGroup = fileIds.map((fId, idx) => ({
+          type: 'video' as const,
+          media: fId,
+          caption: idx === 0 ? `✅ ${videoInfo.title}\n\n📢 ${this.yourUsername}` : undefined,
+        }));
+
+        await this.bot.api.sendMediaGroup(chatId, mediaGroup);
+
+        // Кешируем как альбом
+        const uploadResultAlbum = {
+          fileId: fileIds.join(','),
+          messageId: 0,
+        };
+
+        // Сохраняем в кэш БД под ID плейлиста
+        try {
+          await this.cacheService.set({
+            url: videoInfo.id,
+            formatId: DownloaderService.DIRECT_FORMAT_ID,
+            resolution: DownloaderService.DIRECT_RESOLUTION,
+            fileId: uploadResultAlbum.fileId,
+            archiveMessageId: uploadResultAlbum.messageId,
+            fileSize: totalSize,
+            fileType: 'album',
+            userId: userId,
+            title: videoInfo.title,
+            uploader: videoInfo.uploader || undefined,
+            duration: videoInfo.duration || undefined,
+          });
+        } catch (dbError) {
+          const error = dbError as Error;
+          this.logger.error(`Ошибка сохранения альбома в БД: ${error.message}`);
+        }
+
+        if (progressMsg) {
+          await this.bot.api
+            .deleteMessage(chatId, progressMsg.message_id)
+            .catch(() => {});
+        }
+
+        await this.userService.incrementDownloads(userId);
+        this.advertisementService.incrementUserDownloads(userId);
+        return;
       }
 
       // ⚡ URL-DIRECT (только Instagram): отдаём прямую H.264-ссылку Telegram —

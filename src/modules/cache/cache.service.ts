@@ -51,7 +51,7 @@ export class CacheService {
           downloadCount: { increment: 1 },
         },
       })
-      .catch((err) => this.logger.warn(`⚠️ Не удалось обновить статистику: ${err.message}`));
+      .catch((err: { message: any; }) => this.logger.warn(`⚠️ Не удалось обновить статистику: ${err.message}`));
   }
 
   /**
