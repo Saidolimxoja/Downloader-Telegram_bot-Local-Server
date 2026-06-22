@@ -1,5 +1,5 @@
 # Используем Node 20 Alpine для меньшего размера и лучшей производительности на Linux
-FROM node:20-alpine
+FROM node:22-alpine
 
 # 1. Устанавливаем системные зависимости
 RUN apk add --no-cache \
