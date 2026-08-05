@@ -43,6 +43,18 @@ export class AdminScene {
     return this.adminStates.get(userId);
   }
 
+  /**
+   * 🧹 Полный сброс админ-состояния пользователя.
+   * Вызывается при отмене, а также если у пользователя обнаружилось
+   * админ-состояние без прав админа (защита от «застрявшего» state).
+   */
+  public resetState(userId: number): void {
+    this.adminStates.delete(userId);
+    this.tempAdData.delete(userId);
+    this.tempChannelData.delete(userId);
+    this.editAdId.delete(userId);
+  }
+
   // ============= СОЗДАНИЕ ОБЪЯВЛЕНИЯ =============
 
   async startCreateAd(ctx: Context): Promise<void> {

@@ -1,6 +1,6 @@
 #  YUKLANGANBOT
 
-Мощный Telegram бот для скачивания видео и аудио с YouTube, Instagram, Facebook.
+Мощный Telegram бот для скачивания видео и аудио с YouTube и Instagram.
 
 ## ✨ Возможности
 
@@ -101,14 +101,44 @@ sudo chmod 777 /tmp/bot_downloads
 
 ### Шаг 5: Запусти проект
 ```bash
-# Собери и запусти контейнеры
-docker-compose up --build -d
+# Собери и запусти контейнеры (БЕЗ профиля local-api!)
+docker compose up --build -d
 
 # Проверь логи
-docker-compose logs -f nest-bot
+docker compose logs -f nest-bot
 ```
 
 **Готово!** Бот запущен и работает 🎉
+
+### ⚠️ Telegram Bot API на VPS
+
+На сервере `telegram-bot-api` собран вручную и работает на хосте (systemd), а не в
+Docker. Поэтому на VPS **не указывай** профиль `local-api` — иначе поднимется второй,
+лишний экземпляр и займёт порт 8081.
+
+**1. В `.env` на сервере добавь строку:**
+```bash
+API_URL=http://host.docker.internal:8081
+```
+Без неё подставится dev-дефолт `http://telegram-api:8081` и бот упадёт с
+`Network request for 'getMe' failed!`.
+
+**2. Убедись, что API слушает `0.0.0.0`, а не только `127.0.0.1`** — иначе из
+контейнера он недоступен. Проверка:
+```bash
+ss -lntp | grep 8081
+```
+Если видишь `127.0.0.1:8081` — добавь в параметры запуска telegram-bot-api
+`--http-ip-address=0.0.0.0` и перезапусти сервис.
+
+**3. Проверь связь из контейнера:**
+```bash
+docker exec nest_bot wget -qO- http://host.docker.internal:8081 ; echo
+```
+Ответ (любой, даже с ошибкой метода) означает, что связь есть.
+
+> Если API слушает `0.0.0.0`, закрой порт 8081 извне файрволом —
+> наружу он торчать не должен.
 
 ---
 
@@ -140,6 +170,19 @@ npx prisma generate
 
 # 5. Запусти в режиме разработки
 npm run start:dev
+```
+
+### Всё в Docker (Windows / без своего telegram-bot-api)
+
+Если локально нет собранного telegram-bot-api, подними его в контейнере профилем
+`local-api` — тогда `API_URL` не нужен в `.env`, подставится `http://telegram-api:8081`:
+```bash
+docker compose --profile local-api up --build -d
+docker compose --profile local-api ps
+```
+Останавливать нужно с тем же флагом, иначе `telegram-bot-api` останется висеть:
+```bash
+docker compose --profile local-api down
 ```
 
 ---

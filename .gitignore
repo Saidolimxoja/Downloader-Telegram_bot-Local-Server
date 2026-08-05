@@ -75,3 +75,4 @@ downloads/
 
 # Cache
 /scripts
+.vscode/settings.json

@@ -6,7 +6,7 @@ export const MESSAGES = {
 
 Просто отправьте ссылку — и всё готово за несколько секунд! 🚀
 
-📌 Поддерживаемые Платформы (YouTube, Instagram, Facebook)`,
+📌 Поддерживаемые Платформы (YouTube, Instagram)`,
 
   // Errors
   ERROR_VIDEO_NOT_FOUND: '❌ Видео не найдено, отправь ссылку заново',
@@ -30,4 +30,24 @@ export const MESSAGES = {
   FROM_CACHE: '⚡ Из кэша!',
   QUEUE_POSITION: (pos: number) => `⏳ Позиция в очереди: ${pos}`,
   ALREADY_DOWNLOADING: '⏳ Видео уже загружается, ждите...',
+
+  // Fallback — сообщения, которые не являются поддерживаемой ссылкой
+  NOT_A_LINK: `🤔 Я понимаю только ссылки!
+
+Отправь ссылку на видео 👇
+
+📌 Поддерживаемые платформы:
+• YouTube
+• Instagram`,
+
+  UNSUPPORTED_DOMAIN: (domain: string) =>
+    `❌ Ссылки с *${domain}* пока не поддерживаются.
+
+📌 Я умею скачивать с:
+• YouTube
+• Instagram`,
+
+  NOT_A_TEXT_MESSAGE: `📎 Я работаю только со ссылками на видео.
+
+Отправь ссылку текстом 👇`,
 };

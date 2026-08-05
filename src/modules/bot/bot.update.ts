@@ -2,6 +2,7 @@
 
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { run, sequentialize, RunnerHandle } from '@grammyjs/runner';
+import { Context } from 'grammy';
 import { BotService } from './bot.service';
 import { UserService } from '../user/user.service';
 import { SubscriptionService } from '../subscription/subscription.service';
@@ -10,10 +11,23 @@ import { DownloaderService } from '../downloader/downloader.service';
 import { AdminScene } from '../admin/admin.scene';
 import { PrismaService } from 'src/database/prisma.service';
 
+/** 🌐 Домены, с которых бот умеет скачивать видео. */
+const SUPPORTED_DOMAINS = ['youtube.com', 'youtu.be', 'instagram.com'];
+
+/** ⏱ Как часто (мс) можно повторять подсказку одному пользователю. */
+const HINT_COOLDOWN_MS = 30_000;
+
 @Injectable()
 export class BotUpdate implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotUpdate.name);
   private runHandle: RunnerHandle | null = null;
+
+  /**
+   * 🔇 Антиспам подсказок: userId → время последней отправленной подсказки (мс).
+   * Безопасно как обычный Map: sequentialize() гарантирует, что сообщения
+   * одного чата обрабатываются последовательно, без гонок.
+   */
+  private readonly lastHintAt = new Map<number, number>();
   constructor(
     private prisma: PrismaService,
     private botService: BotService,
@@ -323,7 +337,7 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
             `⚡ Повторные запросы отправляются из кэша мгновенно!\n\n` +
             `🔗 Поддерживаемые платформы:\n` +
             `• YouTube  \n` +
-            `• Instagram + Facebook \n\n` +
+            `• Instagram \n\n` +
             `Если есть вопросы или хотите сотрудничать — пишите Админу @Saidolimxoja`,
           { parse_mode: 'HTML' },
         );
@@ -402,27 +416,61 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
 
     // ==================== MESSAGE HANDLERS ====================
 
-    // Обработка фото и видео (для создания объявления)
+    // Обработка фото и видео — принимаются ТОЛЬКО от админов
+    // и только когда админ находится в соответствующей админ-сцене.
     bot.on(['message:photo', 'message:video'], async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
-      // Проверяем, находится ли пользователь в процессе создания объявления
       const state = this.adminScene.getState(userId);
 
-      if (state === 'waiting_for_media') {
-        await this.adminScene.handleAdMedia(ctx);
+      // Медиа имеет смысл только в этих двух состояниях админ-сцены.
+      const isMediaState = state === 'waiting_for_media' || state === 'edit_media';
+
+      if (isMediaState) {
+        // Права проверяем в момент действия, а не полагаемся на то,
+        // что до сюда дошли только «правильные» пользователи.
+        const isAdmin = await this.isAdminSafe(userId);
+
+        if (!isAdmin) {
+          this.logger.warn(
+            `⚠️ Не-админ ${userId} в админ-состоянии "${state}" — состояние сброшено`,
+          );
+          this.adminScene.resetState(userId);
+          await this.handleUnsupportedMessage(ctx, ctx.message?.caption);
+          return;
+        }
+
+        if (state === 'waiting_for_media') {
+          await this.adminScene.handleAdMedia(ctx);
+        } else {
+          await this.adminScene.handleEditMedia(ctx);
+        }
         return;
       }
 
-      // Редактирование медиа
-      if (state === 'edit_media') {
-        await this.adminScene.handleEditMedia(ctx);
-        return;
-      }
-
-      // Если не в процессе создания - игнорируем
+      // Все остальные — обычная подсказка (в группах молчим).
+      await this.replyUnsupportedInPrivate(ctx, ctx.message?.caption);
     });
+
+    // Прочие типы сообщений (стикеры, голосовые, документы, аудио,
+    // геолокация, контакты...) — админ-сцена их не использует,
+    // поэтому просто подсказываем, что нужна ссылка.
+    bot.on(
+      [
+        'message:sticker',
+        'message:voice',
+        'message:audio',
+        'message:document',
+        'message:animation',
+        'message:video_note',
+        'message:location',
+        'message:contact',
+      ],
+      async (ctx) => {
+        await this.replyUnsupportedInPrivate(ctx, ctx.message?.caption);
+      },
+    );
 
     // Обработка текстовых сообщений
     bot.on('message:text', async (ctx) => {
@@ -464,6 +512,17 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
 
       // Проверяем состояние для создания объявления
       const state = this.adminScene.getState(userId);
+
+      // 🔐 Если пользователь в админ-сцене — подтверждаем права в момент
+      // действия. Запрос в БД делаем только здесь, а не на каждое сообщение.
+      if (state && !(await this.isAdminSafe(userId))) {
+        this.logger.warn(
+          `⚠️ Не-админ ${userId} в админ-состоянии "${state}" — состояние сброшено`,
+        );
+        this.adminScene.resetState(userId);
+        await this.handleUnsupportedMessage(ctx, text);
+        return;
+      }
 
       // ========== СОЗДАНИЕ ОБЪЯВЛЕНИЯ ==========
       if (state === 'waiting_for_content') {
@@ -520,11 +579,14 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
       }
 
       // ========== ОБРАБОТКА ССЫЛОК ==========
-      const url = text.trim();
-      if (!url.startsWith('http')) {
-        return; // Не ссылка - игнорируем
+      // Тот же whitelist доменов, что и в группах — единая логика.
+      const supportedUrls = this.extractSupportedUrls(text);
+      if (supportedUrls.length === 0) {
+        await this.handleUnsupportedMessage(ctx, text);
+        return;
       }
 
+      const url = supportedUrls[0];
       this.logger.log(`📥 Ссылка от пользователя ${userId}: ${url}`);
 
       try {
@@ -596,14 +658,117 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
     const urlRegex = /https?:\/\/[^\s]+/gi;
     const allUrls = text.match(urlRegex) || [];
 
-    const supportedDomains = [
-      'youtube.com',
-      'youtu.be',
-      'instagram.com',
-    ];
-
     return allUrls.filter((url) =>
-      supportedDomains.some((domain) => url.includes(domain)),
+      SUPPORTED_DOMAINS.some((domain) => url.includes(domain)),
     );
+  }
+
+  /**
+   * 🔗 Извлекает из текста ВСЕ ссылки — включая неподдерживаемые.
+   * Нужно, чтобы отличить «прислал ссылку на TikTok» от «прислал просто текст».
+   */
+  private extractAllUrls(text: string): string[] {
+    return text.match(/https?:\/\/[^\s]+/gi) || [];
+  }
+
+  /**
+   * 🏷 Достаёт домен из ссылки для человекочитаемого сообщения.
+   * https://www.tiktok.com/@user/video/123 → tiktok.com
+   */
+  private getDomain(url: string): string {
+    try {
+      return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      return 'этого сайта';
+    }
+  }
+
+  /**
+   * 🔇 Антиспам: можно ли сейчас отправить подсказку этому пользователю?
+   * Если да — сразу засекает время, чтобы следующий вызов был отклонён.
+   */
+  private canSendHint(userId: number): boolean {
+    const now = Date.now();
+    const last = this.lastHintAt.get(userId);
+
+    if (last !== undefined && now - last < HINT_COOLDOWN_MS) {
+      return false;
+    }
+
+    this.lastHintAt.set(userId, now);
+    return true;
+  }
+
+  /**
+   * 🔐 Проверка прав админа, устойчивая к сбоям БД.
+   * При ошибке запроса возвращает false — «отказать» безопаснее, чем «разрешить».
+   */
+  private async isAdminSafe(userId: number): Promise<boolean> {
+    try {
+      return await this.userService.isAdmin(BigInt(userId));
+    } catch (error) {
+      this.logger.error(`❌ Не удалось проверить права ${userId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 💬 Подсказка «нужна ссылка» — только в приватном чате.
+   * В группах бот молчит: там он реагирует исключительно на ссылки.
+   */
+  private async replyUnsupportedInPrivate(
+    ctx: Context,
+    text?: string,
+  ): Promise<void> {
+    const isGroup =
+      ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+    if (isGroup) return;
+
+    await this.handleUnsupportedMessage(ctx, text);
+  }
+
+  /**
+   * 💬 Единая точка ответа на всё, что НЕ является поддерживаемой ссылкой.
+   *
+   * Различает три случая:
+   *  1. Не текст (фото, стикер, голосовое)      → NOT_A_TEXT_MESSAGE
+   *  2. Текст со ссылкой на чужой домен          → UNSUPPORTED_DOMAIN(домен)
+   *  3. Текст без ссылок вообще                  → NOT_A_LINK
+   *
+   * Все ответы проходят через антиспам-фильтр.
+   */
+  private async handleUnsupportedMessage(
+    ctx: Context,
+    text?: string,
+  ): Promise<void> {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    if (!this.canSendHint(userId)) {
+      this.logger.debug(`🔇 Подсказка для ${userId} пропущена (кулдаун)`);
+      return;
+    }
+
+    try {
+      // Случай 1: пришло не текстовое сообщение
+      if (!text) {
+        await ctx.reply(MESSAGES.NOT_A_TEXT_MESSAGE);
+        return;
+      }
+
+      // Случай 2: ссылка есть, но домен не наш
+      const urls = this.extractAllUrls(text);
+      if (urls.length > 0) {
+        await ctx.reply(MESSAGES.UNSUPPORTED_DOMAIN(this.getDomain(urls[0])), {
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      // Случай 3: обычный текст без ссылок
+      await ctx.reply(MESSAGES.NOT_A_LINK);
+    } catch (error) {
+      this.logger.warn(`⚠️ Не удалось отправить подсказку ${userId}:`, error);
+    }
   }
 }
