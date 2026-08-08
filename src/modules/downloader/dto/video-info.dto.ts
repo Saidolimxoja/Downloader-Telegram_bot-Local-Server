@@ -8,9 +8,9 @@ export class VideoInfoDto {
   likeCount: number;
   uploadDate: string;
   thumbnail: string;
-  width?: number;        // 🆕 Ширина видео
-  height?: number;       // 🆕 Высота видео
-  directUrl?: string;    // 🆕 Прямая ссылка на готовый H.264-файл (URL-direct)
+  width?: number; // 🆕 Ширина видео
+  height?: number; // 🆕 Высота видео
+  directUrl?: string; // 🆕 Прямая ссылка на готовый H.264-файл (URL-direct)
   formats: FormatDto[];
   entries?: VideoInfoDto[]; // 🆕 Дополнительные элементы для каруселей / плейлистов
 }

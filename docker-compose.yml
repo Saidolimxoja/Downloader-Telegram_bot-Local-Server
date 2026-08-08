@@ -13,13 +13,15 @@ services:
       - "5432:5432"
     networks:
       - bot-network
+    # Пул соединений: бот плюс несколько воркеров, каждый со своим пулом
+    # Prisma. Дефолтных 100 хватает, но лучше задать явно и осознанно.
+    command: postgres -c max_connections=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Redis для очередей
   redis:
     image: redis:7-alpine
     container_name: tg_bot_redis
@@ -28,7 +30,13 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly no --save ""
+    # appendonly включён намеренно: в Redis теперь лежат не только очереди,
+    # но и сессии видео с кнопками. Терять их при рестарте не хочется.
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
     networks:
       - bot-network
     healthcheck:
@@ -37,10 +45,10 @@ services:
       timeout: 5s
       retries: 5
 
-  # Локальный Telegram Bot API server (снимает лимит 50 МБ на отправку файлов).
-  # Профиль local-api: поднимается ТОЛЬКО при `docker compose --profile local-api up -d`
-  # (dev на Windows). На VPS telegram-bot-api собран и запущен на хосте —
-  # там профиль не указываем, и этот контейнер не создаётся.
+  # Локальный Telegram Bot API server (снимает лимит 50 МБ на отправку).
+  # Профиль local-api: поднимается только при
+  #   docker compose --profile local-api up -d
+  # На VPS telegram-bot-api собран и запущен на хосте — профиль не указываем.
   telegram-api:
     image: aiogram/telegram-bot-api:latest
     container_name: telegram-bot-api
@@ -57,8 +65,11 @@ services:
     networks:
       - bot-network
 
-  # NestJS Application
-  nest-bot:
+  # ============================================================
+  #  ПРОЦЕСС БОТА — принимает сообщения, ставит задачи в очередь.
+  #  Всегда ровно один: long-polling с одним токеном не терпит дублей.
+  # ============================================================
+  bot:
     build: .
     container_name: nest_bot
     restart: always
@@ -68,36 +79,80 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # telegram-api намеренно НЕ в depends_on: на VPS этого сервиса нет,
-    # жёсткая зависимость сломала бы там запуск.
     extra_hosts:
-      # Даёт контейнеру доступ к сервисам на хосте VPS (telegram-bot-api под systemd)
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./downloads:/app/downloads
-      - ./youtube_cookies.txt:/app/youtube_cookies.txt
+      - downloads:/app/downloads
+      - ./youtube_cookies.txt:/app/youtube_cookies.txt:ro
     ports:
       - "3000:3000"
     networks:
       - bot-network
     environment:
-      - NODE_ENV=development
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/bot_db
+      - ROLE=bot
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/bot_db?connection_limit=10&pool_timeout=20
       - DIRECT_URL=postgresql://postgres:postgres@postgres:5432/bot_db
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      # dev (Windows, профиль local-api) — контейнер telegram-api по имени сервиса.
-      # prod (VPS) — задай в .env: API_URL=http://host.docker.internal:8081
       - API_URL=${API_URL:-http://telegram-api:8081}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
-# Описываем тома
+  # ============================================================
+  #  ВОРКЕРЫ — качают, перекодируют, заливают.
+  #  Масштабируются числом реплик:  docker compose up -d --scale worker=4
+  # ============================================================
+  worker:
+    build: .
+    restart: always
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bot:
+        # Ждём бота: он накатывает миграции, воркеру нужна готовая схема
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - downloads:/app/downloads
+      - ./youtube_cookies.txt:/app/youtube_cookies.txt:ro
+    networks:
+      - bot-network
+    environment:
+      - ROLE=worker
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/bot_db?connection_limit=10&pool_timeout=20
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - API_URL=${API_URL:-http://telegram-api:8081}
+      # Порт внутри контейнера один и тот же, наружу не публикуем —
+      # иначе реплики подрались бы за него
+      - PORT=3000
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          # ffmpeg охотно съест все ядра; ограничиваем, чтобы воркеры
+          # не задушили друг друга и базу
+          cpus: "2"
+          memory: 2G
+
 volumes:
   postgres_data:
   redis_data:
-  bot_downloads:
   telegram-data:
+  # Общий том для загрузок: воркер пишет файл, он же его и отправляет,
+  # но при общей папке проще чистить мусор одним кроном
+  downloads:
 
-# Создаем сеть для контейнеров
 networks:
   bot-network:
     driver: bridge

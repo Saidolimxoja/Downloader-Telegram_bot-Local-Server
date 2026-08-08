@@ -53,3 +53,27 @@ export function formatUploadDate(uploadDate: string | null): string {
 
   return `${day}.${month}.${year}`;
 }
+
+/**
+ * 🛡️ Экранирование HTML.
+ *
+ * Названия роликов приходят с чужих площадок и попадают в сообщения с
+ * parse_mode: 'HTML'. Незакрытый «<» в заголовке ломает отправку целиком,
+ * поэтому экранируем всё, что пришло извне.
+ */
+export function escapeHtml(text: string | null | undefined): string {
+  if (!text) return '';
+
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * 🧹 Приведение названия к читаемому виду: подчёркивания в пробелы,
+ * схлопывание пробелов, экранирование HTML.
+ */
+export function cleanTitle(title: string): string {
+  return escapeHtml(title.replace(/_/g, ' ').replace(/\s+/g, ' ').trim());
+}

@@ -25,7 +25,7 @@ export class VideoSessionCleanupService {
       } else {
         this.logger.log('✅ Нет истёкших сессий');
       }
-    } catch (error:any) {
+    } catch (error: any) {
       this.logger.error(`❌ Ошибка очистки сессий: ${error.message}`);
     }
   }

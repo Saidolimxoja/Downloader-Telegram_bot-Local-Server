@@ -76,3 +76,7 @@ downloads/
 # Cache
 /scripts
 .vscode/settings.json
+/telegram-data
+
+# Куки платформ — содержат сессию аккаунта, в git им не место
+*_cookies.txt

@@ -1,12 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { exec, execFile, spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync } from 'fs';
 import { VideoInfoDto, FormatDto } from '../downloader/dto/video-info.dto';
 
-const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 @Injectable()
@@ -14,10 +13,21 @@ export class YtdlpService {
   private readonly logger = new Logger(YtdlpService.name);
   private readonly ytdlpPath: string;
   private readonly cookiesPath: string;
+  private readonly analyzeTimeoutMs: number;
+  private readonly downloadTimeoutMs: number;
 
   constructor(private config: ConfigService) {
     this.ytdlpPath = this.config.get<string>('YTDLP_PATH') || 'yt-dlp';
-    this.cookiesPath = './youtube_cookies.txt';
+    this.cookiesPath =
+      this.config.get<string>('COOKIES_PATH') || './youtube_cookies.txt';
+
+    // Таймауты были зашиты числами в коде. Под нагрузкой их приходится
+    // крутить (медленный канал, тяжёлые ролики) — теперь это переменные
+    // окружения, а не пересборка образа.
+    this.analyzeTimeoutMs =
+      this.config.get<number>('YTDLP_ANALYZE_TIMEOUT_MS') ?? 30_000;
+    this.downloadTimeoutMs =
+      this.config.get<number>('YTDLP_DOWNLOAD_TIMEOUT_MS') ?? 10 * 60 * 1000;
   }
 
   /**
@@ -46,7 +56,7 @@ export class YtdlpService {
       const { stdout } = await execFileAsync(this.ytdlpPath, args, {
         maxBuffer: 10 * 1024 * 1024,
         windowsHide: true,
-        timeout: 15000,
+        timeout: this.analyzeTimeoutMs,
       });
 
       const data = JSON.parse(stdout);
@@ -61,13 +71,18 @@ export class YtdlpService {
 
       let entries: any[] | undefined = undefined;
 
-      if (data._type === 'playlist' && data.entries && data.entries.length > 0) {
+      if (
+        data._type === 'playlist' &&
+        data.entries &&
+        data.entries.length > 0
+      ) {
         const entry = data.entries[0];
         thumbnail = entry.thumbnail || entry.thumbnails?.[0]?.url || thumbnail;
         duration = entry.duration || duration;
         width = entry.width || width;
         height = entry.height || height;
-        uploader = entry.uploader || entry.channel || data.playlist_uploader || uploader;
+        uploader =
+          entry.uploader || entry.channel || data.playlist_uploader || uploader;
 
         if (entry.formats && entry.formats.length > 0) {
           formats = entry.formats;
@@ -114,7 +129,11 @@ export class YtdlpService {
               id: ent.id,
               url: ent.url || url,
               title: this.sanitizeFilename(ent.title || data.title || 'Video'),
-              uploader: ent.uploader || ent.channel || data.playlist_uploader || uploader,
+              uploader:
+                ent.uploader ||
+                ent.channel ||
+                data.playlist_uploader ||
+                uploader,
               duration: ent.duration || 0,
               viewCount: ent.view_count || 0,
               likeCount: ent.like_count || 0,
@@ -194,10 +213,14 @@ export class YtdlpService {
 
       // 🎵 АУДИО
       if (!hasVideo && hasAudio) {
-        const isNative = ext === 'm4a' || ext === 'mp3' || acodec.includes('mp4a') || acodec.includes('aac');
+        const isNative =
+          ext === 'm4a' ||
+          ext === 'mp3' ||
+          acodec.includes('mp4a') ||
+          acodec.includes('aac');
         audioFormats.push({
           formatId: f.format_id,
-          ext: isNative ? 'm4a' : (ext || 'webm'),
+          ext: isNative ? 'm4a' : ext || 'webm',
           resolution: 'audio',
           filesize: size,
           quality: tbr,
@@ -306,17 +329,19 @@ export class YtdlpService {
         windowsHide: true,
       });
 
-      // ⏱️ Защита от зависших загрузок: убиваем процесс через 5 минут,
-      // чтобы он не держал слот очереди вечно
-      const DOWNLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+      // ⏱️ Защита от зависших загрузок: процесс, который не укладывается в
+      // таймаут, убиваем — иначе он держит слот очереди бесконечно
       let settled = false;
+      const timeoutMinutes = Math.round(this.downloadTimeoutMs / 60_000);
       const timeoutTimer = setTimeout(() => {
         if (settled) return;
         settled = true;
         this.logger.error('❌ Таймаут скачивания — убиваю процесс yt-dlp');
         child.kill('SIGKILL');
-        reject(new Error('Таймаут скачивания (превышено 5 минут)'));
-      }, DOWNLOAD_TIMEOUT_MS);
+        reject(
+          new Error(`Таймаут скачивания (превышено ${timeoutMinutes} мин)`),
+        );
+      }, this.downloadTimeoutMs);
 
       let lastProgress = 0;
       let detectedFilename: string | null = null;
@@ -387,13 +412,28 @@ export class YtdlpService {
 
       this.logger.debug(`🖼️ Генерация превью: ${thumbPath}`);
 
-      await execAsync(
-        `ffmpeg -ss 00:00:01 -i "${videoPath}" -vframes 1 -vf "scale=320:-1" -y "${thumbPath}"`,
-        { timeout: 10000 },
+      // execFile, а не exec: путь к файлу содержит название ролика с чужой
+      // площадки. В строке для shell кавычка или $() в заголовке превращались
+      // бы в исполняемую команду — это было единственное место в проекте,
+      // где внешние данные попадали в шелл.
+      await execFileAsync(
+        'ffmpeg',
+        [
+          '-ss',
+          '00:00:01',
+          '-i',
+          videoPath,
+          '-vframes',
+          '1',
+          '-vf',
+          'scale=320:-1',
+          '-y',
+          thumbPath,
+        ],
+        { timeout: 15000, windowsHide: true },
       ).catch(() => null);
 
       if (existsSync(thumbPath)) {
-        this.logger.log(`✅ Превью готово: ${thumbPath}`);
         return thumbPath;
       }
 
@@ -405,13 +445,8 @@ export class YtdlpService {
   }
 
   getThumbnailPath(videoPath: string): string | null {
-    const base = videoPath.replace(/\.(mp4|m4a|webm)$/, '');
     const thumbPath = videoPath.replace(/\.\w+$/, '.jpg');
-
-    if (existsSync(thumbPath)) {
-      return thumbPath;
-    }
-    return null;
+    return existsSync(thumbPath) ? thumbPath : null;
   }
 
   /**
@@ -508,7 +543,9 @@ export class YtdlpService {
       return videoPath;
     } catch (error: any) {
       // При любой ошибке ffprobe/ffmpeg не валим загрузку — отдаём оригинал
-      this.logger.warn(`⚠️ Проверка совместимости не удалась: ${error.message}`);
+      this.logger.warn(
+        `⚠️ Проверка совместимости не удалась: ${error.message}`,
+      );
       return videoPath;
     }
   }
@@ -527,12 +564,16 @@ export class YtdlpService {
    */
   async safeDelete(filePath: string): Promise<void> {
     try {
-      if (existsSync(filePath)) {
-        unlinkSync(filePath);
-        this.logger.debug(`🗑️ Удален: ${filePath}`);
-      }
+      // Асинхронное удаление вместо unlinkSync: метод вызывается из воркера,
+      // который в этот момент обслуживает другие загрузки — блокировать
+      // event loop ради удаления файла незачем
+      await fs.promises.unlink(filePath);
+      this.logger.debug(`🗑️ Удалён: ${filePath}`);
     } catch (error: any) {
-      this.logger.warn(`⚠️ Не удалось удалить ${filePath}: ${error.message}`);
+      // ENOENT — файла и так нет, это ожидаемый исход, а не проблема
+      if (error.code !== 'ENOENT') {
+        this.logger.warn(`⚠️ Не удалось удалить ${filePath}: ${error.message}`);
+      }
     }
   }
 }

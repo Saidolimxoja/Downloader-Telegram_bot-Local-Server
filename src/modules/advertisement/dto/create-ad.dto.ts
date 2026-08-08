@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsBoolean, IsNumber, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsNumber,
+  Min,
+} from 'class-validator';
 
 export class CreateAdDto {
   @IsString()
@@ -24,4 +30,4 @@ export class CreateAdDto {
   @IsNumber()
   @Min(1)
   showInterval?: number;
-}   
+}

@@ -5,4 +5,4 @@ import { AdvertisementService } from './advertisement.service';
   providers: [AdvertisementService],
   exports: [AdvertisementService],
 })
-export class AdvertisementModule {} 
+export class AdvertisementModule {}

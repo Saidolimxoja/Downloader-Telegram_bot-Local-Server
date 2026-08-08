@@ -1,24 +1,58 @@
+// src/modules/downloader/video-session/video-session.service.ts
+
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service';
+import { RedisService } from '../../../common/redis/redis.service';
+import {
+  REDIS_KEYS,
+  REDIS_TTL,
+} from '../../../common/constants/redis-keys.constant';
 import { VideoInfoDto } from '../dto/video-info.dto';
 
+/**
+ * 💾 ХРАНИЛИЩЕ ДАННЫХ ВИДЕО МЕЖДУ АНАЛИЗОМ И НАЖАТИЕМ КНОПКИ
+ *
+ * Когда пользователь присылает ссылку, мы разбираем её и показываем кнопки
+ * качества. Между показом и нажатием нужно где-то держать разобранные данные.
+ *
+ * Раньше это была Map в памяти процесса плюс запись в Postgres. С разделением
+ * на бот и воркеры схема сломалась бы: анализ идёт в воркере, а кнопку
+ * обрабатывает бот — у него в памяти пусто.
+ *
+ * Теперь Redis — основное хранилище (общее для всех процессов, TTL сам чистит),
+ * Postgres — резервное: переживает перезапуск Redis, чтобы кнопки не умирали.
+ */
 @Injectable()
 export class VideoSessionService {
   private readonly logger = new Logger(VideoSessionService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+  ) {}
 
   /**
-   * 💾 Сохранить сессию видео
+   * Сохранить сессию. Redis обязателен, Postgres — по возможности:
+   * если резервная запись не удалась, кнопки всё равно будут работать сутки.
    */
-  async save(videoId: string, videoInfo: VideoInfoDto): Promise<void> {
+  async save(sessionId: string, videoInfo: VideoInfoDto): Promise<void> {
+    await this.redis.setJson(
+      REDIS_KEYS.videoSession(sessionId),
+      videoInfo,
+      REDIS_TTL.videoSession,
+    );
+
+    // В Postgres кладём только сессии с выбором качества: для прямых загрузок
+    // (Reels / Shorts) кнопок нет, и резервная копия там ни к чему
+    if (!videoInfo.formats?.length) return;
+
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 дней
+    expiresAt.setDate(expiresAt.getDate() + 7);
 
     try {
       await this.prisma.videoSession.create({
         data: {
-          id: videoId,
+          id: sessionId,
           originalUrl: videoInfo.url || '',
           videoId: videoInfo.id,
           title: videoInfo.title,
@@ -28,90 +62,89 @@ export class VideoSessionService {
           likeCount: videoInfo.likeCount ? BigInt(videoInfo.likeCount) : null,
           uploadDate: videoInfo.uploadDate,
           thumbnail: videoInfo.thumbnail,
-          formats: JSON.stringify(videoInfo.formats), // Сохраняем как JSON
+          formats: JSON.stringify(videoInfo.formats),
           expiresAt,
         },
       });
-
-      this.logger.log(`💾 Сохранена сессия видео: ${videoId}`);
-    } catch (error:any) {
-      this.logger.error(`❌ Ошибка сохранения сессии: ${error.message}`);
-      throw error;
+    } catch (error: any) {
+      // Не пробрасываем: Redis уже принял данные, бот работоспособен
+      this.logger.warn(
+        `⚠️ Резервная запись сессии не удалась: ${error.message}`,
+      );
     }
   }
 
   /**
-   * 📥 Получить сессию видео
+   * Получить сессию: сперва Redis, затем Postgres.
+   *
+   * ⚠️ У записи из Postgres нет directUrl и entries — они нужны только прямым
+   * загрузкам, а те живут исключительно в Redis и до этой ветки не доходят.
    */
-  async get(videoId: string): Promise<VideoInfoDto | null> {
+  async get(sessionId: string): Promise<VideoInfoDto | null> {
+    const cached = await this.redis.getJson<VideoInfoDto>(
+      REDIS_KEYS.videoSession(sessionId),
+    );
+    if (cached) return cached;
+
     try {
       const session = await this.prisma.videoSession.findUnique({
-        where: { id: videoId },
+        where: { id: sessionId },
       });
 
-      if (!session) {
-        this.logger.debug(`❌ Сессия не найдена: ${videoId}`);
-        return null;
-      }
+      if (!session) return null;
 
-      // Проверяем не истекла ли сессия
       if (new Date() > session.expiresAt) {
-        this.logger.debug(`⏰ Сессия истекла: ${videoId}`);
-        await this.delete(videoId);
+        await this.delete(sessionId);
         return null;
       }
 
-      // Парсим форматы из JSON
-      const formats = JSON.parse(session.formats as string);
-
-      return {
+      const restored: VideoInfoDto = {
         id: session.videoId,
         url: session.originalUrl,
         title: session.title,
-        uploader: session.uploader|| '',
+        uploader: session.uploader || '',
         duration: session.duration || 0,
         viewCount: session.viewCount ? Number(session.viewCount) : 0,
         likeCount: session.likeCount ? Number(session.likeCount) : 0,
         uploadDate: session.uploadDate || '',
         thumbnail: session.thumbnail || '',
-        width: 0,  // 🆕 Дефолтные значения (не сохраняем в БД)
-        height: 0, // 🆕 Будут перезаписаны при реальном скачивании
-        formats,
+        width: 0,
+        height: 0,
+        formats: JSON.parse(session.formats as string),
       };
-    } catch (error:any) {
+
+      // Поднимаем обратно в Redis: следующее нажатие кнопки обойдётся без БД
+      await this.redis.setJson(
+        REDIS_KEYS.videoSession(sessionId),
+        restored,
+        REDIS_TTL.videoSession,
+      );
+
+      return restored;
+    } catch (error: any) {
       this.logger.error(`❌ Ошибка получения сессии: ${error.message}`);
       return null;
     }
   }
 
-  /**
-   * 🗑️ Удалить сессию
-   */
-  async delete(videoId: string): Promise<void> {
+  async delete(sessionId: string): Promise<void> {
+    await this.redis.del(REDIS_KEYS.videoSession(sessionId));
+
     try {
-      await this.prisma.videoSession.delete({
-        where: { id: videoId },
-      });
-      this.logger.debug(`🗑️ Удалена сессия: ${videoId}`);
-    } catch (error:any) {
-      // Игнорируем ошибку если запись уже удалена
+      await this.prisma.videoSession.delete({ where: { id: sessionId } });
+    } catch (error: any) {
+      // P2025 — записи уже нет, это нормальный исход
       if (error.code !== 'P2025') {
         this.logger.error(`❌ Ошибка удаления сессии: ${error.message}`);
       }
     }
   }
 
-  /**
-   * 🧹 Очистить истёкшие сессии (вызывать по крону)
-   */
+  /** 🧹 Очистка истёкших сессий в Postgres (в Redis их убирает TTL) */
   async cleanExpired(): Promise<number> {
     try {
       const result = await this.prisma.videoSession.deleteMany({
-        where: {
-          expiresAt: {
-            lt: new Date(),
-          },
-        },
+        where: { expiresAt: { lt: new Date() } },
       });
 
       if (result.count > 0) {
@@ -119,32 +152,27 @@ export class VideoSessionService {
       }
 
       return result.count;
-    } catch (error:any) {
+    } catch (error: any) {
       this.logger.error(`❌ Ошибка очистки сессий: ${error.message}`);
       return 0;
     }
   }
 
-  /**
-   * 📊 Получить статистику сессий
-   */
   async getStats(): Promise<{
     total: number;
     expired: number;
     active: number;
   }> {
     try {
-      const total = await this.prisma.videoSession.count();
-      const expired = await this.prisma.videoSession.count({
-        where: { expiresAt: { lt: new Date() } },
-      });
+      const now = new Date();
+      // Два счётчика одним походом в БД вместо двух последовательных
+      const [total, expired] = await this.prisma.$transaction([
+        this.prisma.videoSession.count(),
+        this.prisma.videoSession.count({ where: { expiresAt: { lt: now } } }),
+      ]);
 
-      return {
-        total,
-        expired,
-        active: total - expired,
-      };
-    } catch (error:any) {
+      return { total, expired, active: total - expired };
+    } catch (error: any) {
       this.logger.error(`❌ Ошибка получения статистики: ${error.message}`);
       return { total: 0, expired: 0, active: 0 };
     }

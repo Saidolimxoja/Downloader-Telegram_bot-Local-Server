@@ -1,34 +1,47 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma.service';
 import { Advertisement } from '@prisma/client';
-import { Context, InlineKeyboard } from 'grammy';
+import { Bot, Context, InlineKeyboard } from 'grammy';
+import { TELEGRAM_BOT } from '../telegram/telegram.module';
 import { CreateAdDto } from './dto/create-ad.dto';
+import { RedisService } from '../../common/redis/redis.service';
+import {
+  REDIS_KEYS,
+  REDIS_TTL,
+} from '../../common/constants/redis-keys.constant';
 
 @Injectable()
 export class AdvertisementService {
   private readonly logger = new Logger(AdvertisementService.name);
-  private userDownloadCounts = new Map<bigint, number>();
 
-  constructor(private prisma: PrismaService) {}
+  /** Кеш активных объявлений в памяти процесса */
+  private activeAdsCache: Advertisement[] | null = null;
+  private activeAdsExpireAt = 0;
+  private static readonly ADS_CACHE_MS = 60_000;
+
+  constructor(
+    private prisma: PrismaService,
+    private redis: RedisService,
+    @Inject(TELEGRAM_BOT) private readonly bot: Bot<Context>,
+  ) {}
 
   /**
-   * Проверить нужно ли показать рекламу пользователю
+   * Проверить, пора ли показать рекламу.
+   *
+   * Счётчик загрузок раньше жил в Map внутри процесса: он рос без выселения,
+   * обнулялся при каждом рестарте и, что хуже, при нескольких процессах у
+   * пользователя оказывалось несколько независимых счётчиков — реклама
+   * показывалась чаще, чем задумано. Теперь счётчик один, в Redis, с TTL.
    */
   async shouldShowAd(userId: bigint): Promise<boolean> {
     const activeAds = await this.getActiveAds();
+    if (activeAds.length === 0) return false;
 
-    if (activeAds.length === 0) {
-      return false;
-    }
-
-    // Получаем количество загрузок пользователя с момента последней рекламы
-    const count = this.userDownloadCounts.get(userId) || 0;
-
-    // Берём минимальный интервал среди активных объявлений
+    const count = await this.redis.getCount(REDIS_KEYS.adCounter(userId));
     const minInterval = Math.min(...activeAds.map((ad) => ad.showInterval));
 
     if (count >= minInterval) {
-      this.userDownloadCounts.set(userId, 0); // Сбрасываем счётчик
+      await this.redis.del(REDIS_KEYS.adCounter(userId));
       return true;
     }
 
@@ -36,60 +49,65 @@ export class AdvertisementService {
   }
 
   /**
-   * Увеличить счётчик загрузок для пользователя
+   * Увеличить счётчик загрузок пользователя
    */
-  incrementUserDownloads(userId: bigint): void {
-    const current = this.userDownloadCounts.get(userId) || 0;
-    this.userDownloadCounts.set(userId, current + 1);
-
-    this.logger.debug(`Пользователь ${userId}: ${current + 1} загрузок`);
+  async incrementUserDownloads(userId: bigint): Promise<void> {
+    await this.redis.incrWithTtl(
+      REDIS_KEYS.adCounter(userId),
+      REDIS_TTL.adCounter,
+    );
   }
 
   /**
    * Показать рекламу пользователю
    */
   async showAd(ctx: Context): Promise<void> {
-    if (!ctx.from) {
-      this.logger.warn('Cannot show advertisement: ctx.from is missing');
+    if (!ctx.from || !ctx.chat) {
+      this.logger.warn('Реклама не показана: нет ctx.from / ctx.chat');
       return;
     }
-    const userId = BigInt(ctx.from.id);
+
+    await this.showAdToChat(ctx.chat.id, BigInt(ctx.from.id));
+  }
+
+  /**
+   * Показ рекламы без ctx — по идентификатору чата.
+   *
+   * Нужен воркеру: он отдаёт готовое видео уже вне обработчика сообщения,
+   * где никакого ctx нет. Раньше из-за этого реклама показывалась только при
+   * попадании в кеш, а после реальной загрузки — никогда.
+   */
+  async showAdToChat(chatId: number, userId: bigint): Promise<void> {
     const ads = await this.getActiveAds();
+    if (ads.length === 0) return;
 
-    if (ads.length === 0) {
-      return;
-    }
-
-    // Выбираем случайное объявление
     const ad = ads[Math.floor(Math.random() * ads.length)];
-
     this.logger.log(`📣 Показ рекламы ID:${ad.id} пользователю ${userId}`);
 
     try {
       const keyboard = new InlineKeyboard();
-
       if (ad.buttonText && ad.buttonUrl) {
         keyboard.url(ad.buttonText, ad.buttonUrl);
       }
 
-      // Записываем просмотр
-      await this.recordView(ad.id, userId);
-
-      // Отправляем рекламу
       if (ad.mediaFileId) {
-        await ctx.replyWithPhoto(ad.mediaFileId, {
+        await this.bot.api.sendPhoto(chatId, ad.mediaFileId, {
           caption: ad.content,
           reply_markup: keyboard,
         });
       } else {
-        await ctx.reply(ad.content, {
+        await this.bot.api.sendMessage(chatId, ad.content, {
           reply_markup: keyboard,
         });
       }
 
-      this.logger.log(`✅ Реклама показана пользователю ${userId}`);
+      // Статистику пишем только после успешной отправки — иначе счётчик
+      // показов рос бы и на заблокировавших бота пользователях
+      await this.recordView(ad.id, userId).catch((error: Error) =>
+        this.logger.warn(`⚠️ Статистика показа: ${error.message}`),
+      );
     } catch (error: any) {
-      this.logger.error(`❌ Ошибка показа рекламы: ${error.message}`);
+      this.logger.warn(`⚠️ Не удалось показать рекламу: ${error.message}`);
     }
   }
 
@@ -98,19 +116,10 @@ export class AdvertisementService {
    */
   private async recordView(adId: number, userId: bigint): Promise<void> {
     await Promise.all([
-      // Создаём запись просмотра
-      this.prisma.advertisementView.create({
-        data: {
-          adId,
-          userId,
-        },
-      }),
-      // Увеличиваем счётчик просмотров
+      this.prisma.advertisementView.create({ data: { adId, userId } }),
       this.prisma.advertisement.update({
         where: { id: adId },
-        data: {
-          viewCount: { increment: 1 },
-        },
+        data: { viewCount: { increment: 1 } },
       }),
     ]);
   }
@@ -142,12 +151,32 @@ export class AdvertisementService {
   }
 
   /**
-   * Получить активные объявления
+   * Активные объявления.
+   *
+   * Читается после каждой загрузки — то есть тысячи раз в день, — а меняется
+   * раз в неделю. Держим минуту в памяти процесса, чтобы не долбить БД.
    */
   async getActiveAds(): Promise<Advertisement[]> {
-    return this.prisma.advertisement.findMany({
+    const now = Date.now();
+
+    if (this.activeAdsCache && now < this.activeAdsExpireAt) {
+      return this.activeAdsCache;
+    }
+
+    const ads = await this.prisma.advertisement.findMany({
       where: { isActive: true },
     });
+
+    this.activeAdsCache = ads;
+    this.activeAdsExpireAt = now + AdvertisementService.ADS_CACHE_MS;
+
+    return ads;
+  }
+
+  /** Сброс кеша объявлений после правок в админке */
+  private invalidateAdsCache(): void {
+    this.activeAdsCache = null;
+    this.activeAdsExpireAt = 0;
   }
 
   /**
@@ -163,7 +192,7 @@ export class AdvertisementService {
    * Создать объявление
    */
   async create(dto: CreateAdDto): Promise<Advertisement> {
-    return this.prisma.advertisement.create({
+    const ad = await this.prisma.advertisement.create({
       data: {
         content: dto.content,
         mediaFileId: dto.mediaFileId,
@@ -173,6 +202,9 @@ export class AdvertisementService {
         showInterval: dto.showInterval ?? 5,
       },
     });
+
+    this.invalidateAdsCache();
+    return ad;
   }
 
   async findOne(id: number) {
@@ -182,7 +214,7 @@ export class AdvertisementService {
   }
 
   async update(id: number, data: Partial<CreateAdDto>) {
-    return this.prisma.advertisement.update({
+    const ad = await this.prisma.advertisement.update({
       where: { id },
       data: {
         ...(data.content && { content: data.content }),
@@ -194,15 +226,23 @@ export class AdvertisementService {
         ...(data.showInterval && { showInterval: data.showInterval }),
       },
     });
+
+    this.invalidateAdsCache();
+    return ad;
   }
 
   /**
    * Удалить объявление
    */
   async delete(id: number): Promise<void> {
-    await this.prisma.advertisement.delete({
-      where: { id },
-    });
+    // Просмотры ссылаются на объявление внешним ключом — без их удаления
+    // Postgres не даст удалить саму запись
+    await this.prisma.$transaction([
+      this.prisma.advertisementView.deleteMany({ where: { adId: id } }),
+      this.prisma.advertisement.delete({ where: { id } }),
+    ]);
+
+    this.invalidateAdsCache();
   }
 
   /**
@@ -211,16 +251,20 @@ export class AdvertisementService {
   async toggleActive(id: number): Promise<Advertisement> {
     const ad = await this.prisma.advertisement.findUnique({
       where: { id },
+      select: { isActive: true },
     });
 
     if (!ad) {
       throw new Error('Объявление не найдено');
     }
 
-    return this.prisma.advertisement.update({
+    const updated = await this.prisma.advertisement.update({
       where: { id },
       data: { isActive: !ad.isActive },
     });
+
+    this.invalidateAdsCache();
+    return updated;
   }
 
   /**

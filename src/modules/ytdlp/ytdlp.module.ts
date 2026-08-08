@@ -6,6 +6,6 @@ import { ConfigModule } from '@nestjs/config';
 @Module({
   imports: [ConfigModule],
   providers: [YtdlpService],
-  exports: [YtdlpService], 
+  exports: [YtdlpService],
 })
 export class YtdlpModule {}

@@ -424,7 +424,9 @@ export class AdminScene {
         .text('🗑 Удалить кнопку', `admin:ad:remove_button:${adId}`)
         .row()
         .text('❌ Отменить', `admin:ad:edit:${adId}`);
-      await ctx.reply(messages[field as keyof typeof messages], { reply_markup: keyboard });
+      await ctx.reply(messages[field as keyof typeof messages], {
+        reply_markup: keyboard,
+      });
     } else {
       await ctx.reply(messages[field as keyof typeof messages]);
     }
@@ -898,7 +900,7 @@ export class AdminScene {
   async showChannelsMenu(ctx: Context): Promise<void> {
     const channels = await this.channelService.getAll();
 
-let message = `📢 *__ОБЯЗАТЕЛЬНЫЕ КАНАЛЫ__*\n\n`;
+    let message = `📢 *__ОБЯЗАТЕЛЬНЫЕ КАНАЛЫ__*\n\n`;
 
     if (channels.length > 0) {
       for (const channel of channels) {

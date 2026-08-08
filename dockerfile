@@ -1,40 +1,70 @@
-# Используем Node 20 Alpine для меньшего размера и лучшей производительности на Linux
+# ============================================================
+#  СБОРКА
+# ============================================================
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+# Сначала зависимости — этот слой кешируется и не пересобирается
+# при каждой правке исходников
+COPY package*.json ./
+COPY prisma ./prisma/
+
+RUN npm ci --legacy-peer-deps --prefer-offline --no-audit
+RUN npx prisma generate
+
+COPY . .
+RUN npm run build
+
+# Оставляем только продакшн-зависимости: dev-пакеты (typescript, eslint,
+# jest) в рантайме не нужны и весят больше самого приложения
+RUN npm prune --omit=dev --legacy-peer-deps
+
+
+# ============================================================
+#  РАНТАЙМ
+# ============================================================
 FROM node:22-alpine
 
-# 1. Устанавливаем системные зависимости
+# yt-dlp и ffmpeg — рабочие инструменты бота, ставим в системный слой
 RUN apk add --no-cache \
     python3 \
     py3-pip \
     ffmpeg \
     openssl \
-    ca-certificates
+    ca-certificates \
+    curl \
+    tini
 
-# 2. Создаем виртуальное окружение
 ENV VIRTUAL_ENV=/opt/venv
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-
-# Устанавливаем yt-dlp
 RUN pip3 install --no-cache-dir --upgrade yt-dlp
 
-# 3. Настройка рабочей директории
 WORKDIR /app
 
-# 4. Копируем файлы зависимостей
-COPY package*.json ./
-COPY prisma ./prisma/
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/package.json ./package.json
 
-# 5. Устанавливаем Node-зависимости с кешем
-RUN npm ci --legacy-peer-deps --prefer-offline --no-audit
+# Папка загрузок должна принадлежать пользователю, под которым идёт процесс
+RUN mkdir -p /app/downloads && chown -R node:node /app
 
-# 6. Генерируем клиент базы данных
-RUN npx prisma generate
+# Не работаем от root: процесс запускает внешние программы (yt-dlp, ffmpeg)
+# с данными из интернета — лишние права здесь ни к чему
+USER node
 
-# 7. Копируем остальной код (исключаем node_modules)
-COPY --chown=node:node . .
+ENV NODE_ENV=production
 
-# 8. Собираем проект
-RUN npm run build
+# tini как PID 1 — иначе Node не получает SIGTERM корректно, и корректное
+# завершение (дописать текущую задачу, закрыть соединения) не срабатывает
+ENTRYPOINT ["/sbin/tini", "--"]
 
-# 9. Команда запуска
-CMD sh -c 'if [ "$NODE_ENV" = "production" ]; then DATABASE_URL="$DIRECT_URL" npx prisma migrate deploy; fi && NODE_ENV=${NODE_ENV:-development} npm run start:prod'
+# Миграции применяет только процесс роли bot: он существует в единственном
+# экземпляре. Пять воркеров, одновременно накатывающих миграции, — это гонка.
+CMD sh -c '\
+  if [ "$ROLE" != "worker" ] && [ "$NODE_ENV" = "production" ]; then \
+    DATABASE_URL="${DIRECT_URL:-$DATABASE_URL}" npx prisma migrate deploy; \
+  fi && \
+  node dist/main'

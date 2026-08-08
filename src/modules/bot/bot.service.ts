@@ -1,64 +1,54 @@
+// src/modules/bot/bot.service.ts
+
 import {
+  Inject,
   Injectable,
-  OnModuleInit,
-  OnModuleDestroy,
   Logger,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Bot, Context } from 'grammy';
-import { UploaderService } from '../uploader/uploader.service';
+import { TELEGRAM_BOT } from '../telegram/telegram.module';
+import { getRole, isBotRole } from '../../config/role';
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotService.name);
-  private readonly bot: Bot<Context>;
   private isShuttingDown = false;
 
-  constructor(
-    private readonly config: ConfigService,
-    private readonly uploaderService: UploaderService,
-  ) {
-    const token = this.config.getOrThrow<string>('BOT_TOKEN');
-    const apiUrl = this.config.getOrThrow<string>('API_URL');
-
-    this.bot = new Bot(token, {
-      client: {
-        apiRoot: apiUrl,
-      },
-    });
-
-    this.logger.log(`🌐 Telegram API: ${apiUrl}`);
-  }
+  constructor(@Inject(TELEGRAM_BOT) private readonly bot: Bot<Context>) {}
 
   async onModuleInit() {
+    this.logger.log(`🚀 Инициализация бота (роль: ${getRole()})...`);
+
+    // Воркер апдейты не принимает: ни getMe, ни меню команд ему не нужны.
+    // Раньше каждая реплика дёргала оба запроса на старте, а недоступность
+    // Telegram API валила процесс, которому она в тот момент была не нужна.
+    if (!isBotRole()) {
+      this.logger.log(
+        '⚙️ Роль worker: обращения к Telegram API при старте пропущены',
+      );
+      return;
+    }
+
     try {
-      this.logger.log('🚀 Инициализация бота...');
-
-      // 👉 Передаём bot в сервисы ТОЛЬКО после полной инициализации
-      this.uploaderService.setBot(this.bot);
-
-      // 👉 Проверка бота
       const me = await this.bot.api.getMe();
       this.logger.log(`✅ Бот: @${me.username} (ID: ${me.id})`);
 
-      // 👉 Команды
       await this.bot.api.setMyCommands([
         { command: 'start', description: 'Запуск бота' },
         { command: 'help', description: 'Помощь' },
-        { command: 'stats', description: 'Статистика' },
         { command: 'channelid', description: 'Получить ID чата' },
         { command: 'checkchannels', description: 'Проверка каналов (админ)' },
         { command: 'admin', description: 'Админ-панель (админ)' },
       ]);
 
       this.logger.log('✅ Команды установлены');
-      this.logger.log('✅ Бот готов к работе (запуск через BotUpdate)');
     } catch (error: any) {
       this.handleError(error);
     }
   }
 
-  // 🔥 Централизованная обработка ошибок
   private handleError(error: any) {
     if (error?.description?.includes('Conflict')) {
       this.logger.error('❌ Бот уже запущен в другом процессе!');
@@ -73,6 +63,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
+
+    // Останавливать polling имеет смысл только там, где он запущен.
+    // На воркере bot.stop() просто ждал бы несуществующий цикл получения апдейтов.
+    if (!isBotRole()) return;
 
     this.logger.warn('🛑 Остановка бота...');
 

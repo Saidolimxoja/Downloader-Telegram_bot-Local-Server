@@ -7,8 +7,8 @@ import { ChannelModule } from '../channel/channel.module';
 import { CacheModule } from '../cache/cache.module';
 
 @Module({
-  imports: [UserModule, AdvertisementModule, ChannelModule ,CacheModule],
+  imports: [UserModule, AdvertisementModule, ChannelModule, CacheModule],
   providers: [AdminService, AdminScene],
   exports: [AdminService, AdminScene],
 })
-export class AdminModule {} 
+export class AdminModule {}

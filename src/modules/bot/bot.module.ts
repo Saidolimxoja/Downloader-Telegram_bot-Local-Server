@@ -1,31 +1,28 @@
-import { Module, forwardRef } from '@nestjs/common';
-import { NestjsGrammyModule } from '@grammyjs/nestjs'; // 👈 ИСПРАВЛЕНО
+// src/modules/bot/bot.module.ts
+
+import { Module } from '@nestjs/common';
 import { BotService } from './bot.service';
 import { BotUpdate } from './bot.update';
 import { UserModule } from '../user/user.module';
 import { SubscriptionModule } from '../subscription/subscription.module';
+import { ChannelModule } from '../channel/channel.module';
 import { DownloaderModule } from '../downloader/downloader.module';
 import { AdminModule } from '../admin/admin.module';
-import { YtdlpModule } from '../ytdlp/ytdlp.module';
-import { UploaderModule } from '../uploader/uploader.module';
-import { ConfigService } from '@nestjs/config';
 
+/**
+ * Экземпляр бота живёт в TelegramModule (глобальном), поэтому здесь больше
+ * нет ни NestjsGrammyModule, ни forwardRef между Bot / Downloader / Uploader:
+ * циклов зависимостей просто не возникает.
+ */
 @Module({
   imports: [
-    NestjsGrammyModule.forRootAsync({
-      useFactory: (config: ConfigService) => ({
-        token: config.getOrThrow<string>('BOT_TOKEN'),
-      }),
-      inject: [ConfigService],
-    }),
     UserModule,
     SubscriptionModule,
-    forwardRef(() => DownloaderModule), // 👈 Используй forwardRef здесь
+    ChannelModule,
+    DownloaderModule,
     AdminModule,
-    YtdlpModule,
-    forwardRef(() => UploaderModule), // Если в Uploader тоже нужен бот
   ],
   providers: [BotService, BotUpdate],
-  exports: [BotService, NestjsGrammyModule], // 👈 Теперь NestjsGrammyModule экспортируется корректно
+  exports: [BotService],
 })
 export class BotModule {}
