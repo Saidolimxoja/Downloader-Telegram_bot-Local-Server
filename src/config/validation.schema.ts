@@ -20,6 +20,12 @@ export const validationSchema = Joi.object({
   // ===== Каналы =====
   CHANNEL_ID: Joi.string().required(),
 
+  // ===== Публичный адрес =====
+  // Нужен только для подсчёта переходов по рекламе: кнопка объявления ведёт
+  // через него, чтобы зафиксировать клик. Без него отслеживание отключается,
+  // а кнопки ведут напрямую к рекламодателю.
+  PUBLIC_URL: Joi.string().uri().optional(),
+
   // ===== База данных =====
   DATABASE_URL: Joi.string().required(),
   DIRECT_URL: Joi.string().optional(),

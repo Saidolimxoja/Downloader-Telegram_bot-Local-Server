@@ -85,11 +85,14 @@ services:
       - downloads:/app/downloads
       - ./youtube_cookies.txt:/app/youtube_cookies.txt:ro
     ports:
-      - "3000:3000"
+      # Только на localhost: /metrics показывает состояние очередей и памяти,
+      # наружу его отдавать незачем. Публичный доступ к /r/* даёт Caddy.
+      - "127.0.0.1:3000:3000"
     networks:
       - bot-network
     environment:
       - ROLE=bot
+      - PUBLIC_URL=${PUBLIC_URL:-}
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/bot_db?connection_limit=10&pool_timeout=20
       - DIRECT_URL=postgresql://postgres:postgres@postgres:5432/bot_db
@@ -145,10 +148,42 @@ services:
           cpus: "2"
           memory: 2G
 
+  # ============================================================
+  #  HTTPS для отслеживания переходов по рекламе.
+  #  Профиль public: поднимается только при
+  #    docker compose --profile public up -d
+  #  Если на сервере уже стоит nginx — не включайте профиль, он займёт
+  #  порты 80 и 443. Тогда настройте проксирование /r/* в своём nginx.
+  # ============================================================
+  caddy:
+    image: caddy:2-alpine
+    container_name: bot_caddy
+    profiles: ["public"]
+    restart: always
+    depends_on:
+      - bot
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    environment:
+      # Домен для сертификата. Без него Caddy не поднимется —
+      # это осознанно: молча работать по HTTP он не должен.
+      DOMAIN: ${DOMAIN:?укажите DOMAIN в .env, например saidolimxoja.uz}
+    networks:
+      - bot-network
+
 volumes:
   postgres_data:
   redis_data:
   telegram-data:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
   # Общий том для загрузок: воркер пишет файл, он же его и отправляет,
   # но при общей папке проще чистить мусор одним кроном
   downloads:

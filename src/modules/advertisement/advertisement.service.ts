@@ -3,6 +3,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { Advertisement } from '@prisma/client';
 import { Bot, Context, InlineKeyboard } from 'grammy';
 import { TELEGRAM_BOT } from '../telegram/telegram.module';
+import { ClickTrackingService } from './click-tracking.service';
 import { CreateAdDto } from './dto/create-ad.dto';
 import { RedisService } from '../../common/redis/redis.service';
 import {
@@ -22,6 +23,7 @@ export class AdvertisementService {
   constructor(
     private prisma: PrismaService,
     private redis: RedisService,
+    private clickTracking: ClickTrackingService,
     @Inject(TELEGRAM_BOT) private readonly bot: Bot<Context>,
   ) {}
 
@@ -86,8 +88,16 @@ export class AdvertisementService {
 
     try {
       const keyboard = new InlineKeyboard();
+
       if (ad.buttonText && ad.buttonUrl) {
-        keyboard.url(ad.buttonText, ad.buttonUrl);
+        // Ведём кнопку через свой редирект, чтобы посчитать переход.
+        // Если домен не настроен — вернётся исходная ссылка рекламодателя.
+        const url = this.clickTracking.buildClickUrl(
+          ad.id,
+          userId,
+          ad.buttonUrl,
+        );
+        if (url) keyboard.url(ad.buttonText, url);
       }
 
       if (ad.mediaFileId) {
