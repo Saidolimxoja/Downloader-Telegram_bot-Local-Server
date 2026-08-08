@@ -7,6 +7,8 @@ import {
   REDIS_KEYS,
   REDIS_TTL,
 } from '../../common/constants/redis-keys.constant';
+import { PremiumService } from '../premium/premium.service';
+import { PREMIUM_RATE_LIMIT_MULTIPLIER } from '../premium/premium.constants';
 
 /** Результат проверки: пускаем ли запрос и что сказать пользователю, если нет */
 export interface RateLimitVerdict {
@@ -37,6 +39,7 @@ export class RateLimitService {
 
   constructor(
     private readonly redis: RedisService,
+    private readonly premiumService: PremiumService,
     config: ConfigService,
   ) {
     this.perMinute = config.get<number>('RATE_LIMIT_PER_MINUTE') ?? 5;
@@ -49,9 +52,18 @@ export class RateLimitService {
    * отдельная «проверка» и «фиксация» дали бы гонку между процессами.
    */
   async checkAndConsume(userId: bigint): Promise<RateLimitVerdict> {
+    // 💎 Премиуму лимиты подняты, а не сняты полностью: даже платящий
+    // пользователь не должен иметь возможность занять всю очередь
+    const isPremium = await this.premiumService.isPremium(userId);
+    const multiplier = isPremium ? PREMIUM_RATE_LIMIT_MULTIPLIER : 1;
+
+    const perMinute = this.perMinute * multiplier;
+    const perHour = this.perHour * multiplier;
+    const maxActive = this.maxActive * multiplier;
+
     const active = await this.redis.getCount(REDIS_KEYS.activeJobs(userId));
 
-    if (active >= this.maxActive) {
+    if (active >= maxActive) {
       return {
         allowed: false,
         reason:
@@ -63,24 +75,28 @@ export class RateLimitService {
     const perMinuteKey = REDIS_KEYS.rateLimit(userId, 'min');
     const minuteCount = await this.redis.incrWithTtl(perMinuteKey, 60);
 
-    if (minuteCount > this.perMinute) {
+    if (minuteCount > perMinute) {
       return {
         allowed: false,
         reason:
-          `🚦 Слишком много ссылок за минуту (лимит ${this.perMinute}).\n\n` +
-          'Подожди немного и попробуй снова.',
+          `🚦 Слишком много ссылок за минуту (лимит ${perMinute}).\n\n` +
+          (isPremium
+            ? 'Подожди немного и попробуй снова.'
+            : 'Подожди немного — или оформи премиум командой /premium, там лимиты выше.'),
       };
     }
 
     const perHourKey = REDIS_KEYS.rateLimit(userId, 'hour');
     const hourCount = await this.redis.incrWithTtl(perHourKey, 3600);
 
-    if (hourCount > this.perHour) {
+    if (hourCount > perHour) {
       return {
         allowed: false,
         reason:
-          `🚦 Достигнут часовой лимит (${this.perHour} видео).\n\n` +
-          'Он сбросится в течение часа — это защита от перегрузки сервера.',
+          `🚦 Достигнут часовой лимит (${perHour} видео).\n\n` +
+          (isPremium
+            ? 'Он сбросится в течение часа.'
+            : 'Он сбросится в течение часа. С премиумом лимит в 4 раза выше — /premium'),
       };
     }
 

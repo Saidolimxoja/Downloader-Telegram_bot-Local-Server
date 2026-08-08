@@ -15,6 +15,7 @@ import { CacheModule } from './modules/cache/cache.module';
 import { UploaderModule } from './modules/uploader/uploader.module';
 import { DownloaderModule } from './modules/downloader/downloader.module';
 import { AdvertisementModule } from './modules/advertisement/advertisement.module';
+import { PremiumModule } from './modules/premium/premium.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { BotModule } from './modules/bot/bot.module';
 import { HealthModule } from './modules/health/health.module';
@@ -51,6 +52,7 @@ import { HealthModule } from './modules/health/health.module';
     RedisModule,
     TelegramModule,
     DatabaseModule,
+    PremiumModule,
 
     UserModule,
     ChannelModule,

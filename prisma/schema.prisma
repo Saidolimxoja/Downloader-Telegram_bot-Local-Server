@@ -14,19 +14,65 @@ model User {
   username        String?
   firstName       String?
   lastName        String?
-  
+
   isAdmin         Boolean   @default(false)
   isBanned        Boolean   @default(false)
-  
+
   totalDownloads  Int       @default(0)
   lastActiveAt    DateTime  @updatedAt
   createdAt       DateTime  @default(now())
-  
+
+  // ===== ПРЕМИУМ =====
+  // Дата окончания подписки. null или прошедшая дата — премиума нет.
+  // Хранится именно дата, а не флаг: так продление это просто сдвиг срока,
+  // и не нужен отдельный процесс, который «снимает» премиум по расписанию.
+  premiumUntil    DateTime?
+
+  // ===== РЕФЕРАЛЬНАЯ ПРОГРАММА =====
+  // Кто пригласил этого пользователя. Проставляется один раз при первом
+  // /start по реферальной ссылке и больше не меняется.
+  referredBy      BigInt?
+  // Сколько человек привёл сам. Денормализовано намеренно: цифра
+  // показывается пользователю на каждом открытии /ref, а считать COUNT
+  // по таблице на каждый показ — лишняя нагрузка.
+  referralCount   Int       @default(0)
+
   downloads       Download[]
   adViews         AdvertisementView[]
-  
+  payments        Payment[]
+
   @@index([username])
+  @@index([premiumUntil])
+  @@index([referredBy])
   @@map("users")
+}
+
+// ========== ПЛАТЕЖИ (Telegram Stars) ==========
+model Payment {
+  id                  Int       @id @default(autoincrement())
+
+  userId              BigInt
+  user                User      @relation(fields: [userId], references: [id])
+
+  // Сколько звёзд заплачено и сколько дней премиума начислено
+  stars               Int
+  days                Int
+
+  // Идентификатор платежа от Telegram. Уникальный — это защита от двойного
+  // начисления: Telegram может прислать successful_payment повторно, и без
+  // этого ограничения пользователь получил бы дни дважды за один платёж.
+  // Он же нужен для возврата средств через refundStarPayment.
+  telegramChargeId    String    @unique
+
+  // Возвращён ли платёж
+  refunded            Boolean   @default(false)
+  refundedAt          DateTime?
+
+  createdAt           DateTime  @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("payments")
 }
 
 // ========== ОБЯЗАТЕЛЬНЫЕ КАНАЛЫ ==========

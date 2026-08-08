@@ -11,6 +11,7 @@ import { UserService } from '../user/user.service';
 import { AdvertisementService } from '../advertisement/advertisement.service';
 import { UploaderService } from '../uploader/uploader.service';
 import { YtdlpService } from '../ytdlp/ytdlp.service';
+import { PremiumService } from '../premium/premium.service';
 import { VideoInfoDto } from './dto/video-info.dto';
 
 /**
@@ -35,6 +36,7 @@ export class MediaDeliveryService {
     private readonly advertisementService: AdvertisementService,
     private readonly uploaderService: UploaderService,
     private readonly ytdlpService: YtdlpService,
+    private readonly premiumService: PremiumService,
     config: ConfigService,
   ) {
     this.botUsername = config.get<string>('YOUR_USERNAME') || '@your_bot';
@@ -257,6 +259,9 @@ export class MediaDeliveryService {
     // увидят люди, которые ничего не запрашивали. У групповых чатов
     // идентификатор отрицательный, этого признака достаточно.
     if (chatId < 0) return;
+
+    // 💎 Отсутствие рекламы — главное, за что платят подписчики
+    if (await this.premiumService.isPremium(userId)) return;
 
     try {
       if (await this.advertisementService.shouldShowAd(userId)) {

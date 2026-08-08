@@ -130,6 +130,7 @@ export class AnalysisService {
       backoff: { type: 'exponential', delay: 5000 },
       removeOnComplete: true,
       removeOnFail: 500,
+      priority: await this.downloaderService.resolvePriority(userId),
     });
 
     await this.media.editMessage(

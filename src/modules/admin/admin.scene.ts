@@ -6,6 +6,7 @@ import { UserService } from '../user/user.service';
 import { CreateAdDto } from '../advertisement/dto/create-ad.dto';
 import { PrismaService } from 'src/database/prisma.service';
 import { CacheService } from '../cache/cache.service';
+import { PremiumService } from '../premium/premium.service';
 
 interface TempAdData {
   content?: string;
@@ -37,6 +38,7 @@ export class AdminScene {
     private userService: UserService,
     private prisma: PrismaService,
     private cacheService: CacheService,
+    private premiumService: PremiumService,
   ) {}
 
   public getState(userId: number): string | undefined {
@@ -929,10 +931,16 @@ export class AdminScene {
   }
 
   async showStats(ctx: Context): Promise<void> {
-    const userStats = await this.userService.getStats();
-    const adStats = await this.advertisementService.getTotalStats();
-    const sessionsCount = await this.prisma.videoSession.count();
-    const cacheStats = await this.cacheService.getStats();
+    // Все запросы разом: раньше они шли последовательно и открытие
+    // статистики ждало сумму всех задержек
+    const [userStats, adStats, sessionsCount, cacheStats, salesStats] =
+      await Promise.all([
+        this.userService.getStats(),
+        this.advertisementService.getTotalStats(),
+        this.prisma.videoSession.count(),
+        this.cacheService.getStats(),
+        this.premiumService.getSalesStats(),
+      ]);
 
     const message =
       `📊 *Статистика бота*\n\n` +
@@ -941,6 +949,10 @@ export class AdminScene {
       `• Активных сегодня: ${userStats.activeToday}\n` +
       `• Видео-сессий: ${sessionsCount}\n` +
       `• Кеш: ${cacheStats.totalFiles}\n\n` +
+      `💎 *Премиум:*\n` +
+      `• Подписчиков сейчас: ${salesStats.activeSubscribers}\n` +
+      `• Заработано всего: ${salesStats.totalStars} ⭐ (${salesStats.totalPayments} платежей)\n` +
+      `• За 30 дней: ${salesStats.monthStars} ⭐ (${salesStats.monthPayments})\n\n` +
       `📣 *Реклама:*\n` +
       `• Объявлений: ${adStats.totalAds} (${adStats.activeAds} активных)\n` +
       `• Просмотров: ${adStats.totalViews}\n` +

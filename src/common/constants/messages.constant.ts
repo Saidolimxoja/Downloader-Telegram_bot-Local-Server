@@ -1,6 +1,19 @@
 // src/common/constants/messages.constant.ts
 
 import { SUPPORTED_PLATFORMS_LIST } from './platform.constant';
+import {
+  PREMIUM_BENEFITS,
+  REFERRAL_REWARD_DAYS,
+} from '../../modules/premium/premium.constants';
+
+/** Дата в человеческом виде: 15.03.2026 */
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
 
 /**
  * Список поддерживаемых площадок больше не переписывается руками в каждом
@@ -77,4 +90,37 @@ ${SUPPORTED_PLATFORMS_LIST}`,
   NOT_A_TEXT_MESSAGE: `📎 Я работаю только со ссылками на видео.
 
 Отправь ссылку текстом 👇`,
+
+  // ===== ПРЕМИУМ =====
+
+  PREMIUM_OFFER: (until: Date | null) => {
+    const active = until && until > new Date();
+
+    const header = active
+      ? `💎 <b>У тебя активен премиум</b>\nДействует до <b>${formatDate(until)}</b>\n\nМожно продлить — дни суммируются.`
+      : '💎 <b>Премиум</b>';
+
+    return (
+      `${header}\n\n` +
+      `${PREMIUM_BENEFITS.join('\n')}\n\n` +
+      `Оплата звёздами Telegram — прямо здесь, без карт и регистрации.\n\n` +
+      `Выбери срок:`
+    );
+  },
+
+  PREMIUM_ACTIVATED: (until: Date) =>
+    `✅ <b>Премиум активирован!</b>\n\n` +
+    `Действует до <b>${formatDate(until)}</b>\n\n` +
+    `${PREMIUM_BENEFITS.join('\n')}\n\n` +
+    `Спасибо за поддержку 💛`,
+
+  // ===== РЕФЕРАЛЫ =====
+
+  REFERRAL: (link: string, count: number) =>
+    `🎁 <b>Приглашай друзей — получай премиум</b>\n\n` +
+    `За каждого, кто придёт по твоей ссылке, ты получаешь ` +
+    `<b>${REFERRAL_REWARD_DAYS} дня премиума</b>.\n\n` +
+    `👥 Уже пришло по твоей ссылке: <b>${count}</b>\n\n` +
+    `Твоя ссылка:\n<code>${link}</code>\n\n` +
+    `Просто отправь её друзьям.`,
 };

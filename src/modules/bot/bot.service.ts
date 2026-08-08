@@ -37,6 +37,11 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
       await this.bot.api.setMyCommands([
         { command: 'start', description: 'Запуск бота' },
+        {
+          command: 'premium',
+          description: '💎 Премиум — без рекламы и лимитов',
+        },
+        { command: 'ref', description: '🎁 Пригласить друзей' },
         { command: 'help', description: 'Помощь' },
         { command: 'channelid', description: 'Получить ID чата' },
         { command: 'checkchannels', description: 'Проверка каналов (админ)' },

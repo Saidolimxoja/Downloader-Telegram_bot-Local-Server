@@ -78,6 +78,22 @@ export class UserService {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
+  /**
+   * Существует ли пользователь.
+   *
+   * Нужно реферальной программе: награда начисляется только за НОВОГО
+   * человека, иначе достаточно было бы повторно открыть чужую ссылку,
+   * чтобы бесконечно начислять дни премиума.
+   */
+  async exists(id: bigint): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    return user !== null;
+  }
+
   /** Проверка бана — тянем один булев столбец вместо всей строки */
   async isBanned(userId: bigint): Promise<boolean> {
     const user = await this.prisma.user.findUnique({

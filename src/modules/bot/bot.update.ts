@@ -15,6 +15,9 @@ import { SubscriptionService } from '../subscription/subscription.service';
 import { DownloaderService } from '../downloader/downloader.service';
 import { ChannelService } from '../channel/channel.service';
 import { AdminScene } from '../admin/admin.scene';
+import { PremiumService } from '../premium/premium.service';
+import { ReferralService } from '../premium/referral.service';
+import { findPlan } from '../premium/premium.constants';
 import { RedisService } from '../../common/redis/redis.service';
 import { MESSAGES } from '../../common/constants/messages.constant';
 import {
@@ -40,6 +43,8 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
     private downloaderService: DownloaderService,
     private channelService: ChannelService,
     private adminScene: AdminScene,
+    private premiumService: PremiumService,
+    private referralService: ReferralService,
     private redis: RedisService,
     private config: ConfigService,
   ) {}
@@ -136,6 +141,35 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`❌ /checkchannels: ${error.message}`);
         await ctx.reply('❌ Ошибка проверки');
       }
+    });
+
+    /**
+     * Возврат звёзд. Telegram требует от ботов, продающих цифровые товары,
+     * возможности вернуть оплату — без этого приложение могут ограничить.
+     * Идентификатор платежа виден в чеке у пользователя.
+     */
+    bot.command('refund', async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      if (!(await this.isAdminSafe(userId))) {
+        await ctx.reply(MESSAGES.ERROR_NO_ACCESS);
+        return;
+      }
+
+      const chargeId = ctx.match?.trim();
+      if (!chargeId) {
+        await ctx.reply(
+          'Использование: `/refund <telegram_payment_charge_id>`',
+          { parse_mode: 'Markdown' },
+        );
+        return;
+      }
+
+      const result = await this.premiumService.refund(chargeId);
+      await ctx.reply(
+        result.ok ? `✅ ${result.message}` : `❌ ${result.message}`,
+      );
     });
 
     // ---------- Навигация по меню ----------
@@ -242,6 +276,12 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
       if (!userId) return;
 
       try {
+        // 🎁 Пришёл ли человек по реферальной ссылке — проверяем ДО создания
+        // записи: награда полагается только за нового пользователя, иначе
+        // достаточно было бы открыть чужую ссылку второй раз
+        const referrerId = this.referralService.parsePayload(ctx.match);
+        const isNewUser = !(await this.userService.exists(BigInt(userId)));
+
         // Один upsert вместо связки SELECT + UPDATE/INSERT: пользователь
         // заведён, время активности обновлено, флаги получены
         const { isBanned } = await this.userService.ensureUser({
@@ -256,12 +296,11 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
           return;
         }
 
-        const hasSubscription = await this.subscriptionService.checkAll(
-          userId,
-          bot,
-        );
+        if (isNewUser && referrerId) {
+          await this.referralService.register(BigInt(userId), referrerId);
+        }
 
-        if (!hasSubscription) {
+        if (!(await this.hasAccess(userId, bot))) {
           await ctx.reply(MESSAGES.SUBSCRIBE_REQUIRED, {
             reply_markup:
               await this.subscriptionService.getSubscriptionKeyboard(),
@@ -274,6 +313,94 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`❌ /start: ${error.message}`);
         await ctx.reply('❌ Произошла ошибка');
       }
+    });
+
+    // ==================== ПРЕМИУМ ====================
+
+    bot.command('premium', async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId || ctx.chat?.type !== 'private') return;
+
+      const status = await this.premiumService.getStatus(BigInt(userId));
+
+      await ctx.reply(MESSAGES.PREMIUM_OFFER(status.until), {
+        parse_mode: 'HTML',
+        reply_markup: this.premiumService.buildPlansKeyboard(),
+      });
+    });
+
+    bot.callbackQuery(/^buy:(\w+)$/, async (ctx) => {
+      const plan = findPlan(ctx.match[1]);
+
+      if (!plan || !ctx.chat) {
+        await ctx.answerCallbackQuery({ text: '❌ Тариф не найден' });
+        return;
+      }
+
+      await ctx.answerCallbackQuery();
+
+      try {
+        await this.premiumService.sendInvoice(ctx.chat.id, plan);
+      } catch (error: any) {
+        this.logger.error(`❌ Счёт на ${plan.id}: ${error.message}`);
+        await ctx.reply('❌ Не удалось выставить счёт. Попробуй позже.');
+      }
+    });
+
+    // Telegram спрашивает подтверждение прямо перед списанием звёзд.
+    // Ответить обязательно в течение 10 секунд, иначе платёж отменяется.
+    bot.on('pre_checkout_query', async (ctx) => {
+      await ctx.answerPreCheckoutQuery(true).catch((error: Error) => {
+        this.logger.error(`❌ pre_checkout: ${error.message}`);
+      });
+    });
+
+    bot.on('message:successful_payment', async (ctx) => {
+      const payment = ctx.message?.successful_payment;
+      const userId = ctx.from?.id;
+      if (!payment || !userId) return;
+
+      try {
+        const result = await this.premiumService.applyPayment({
+          userId: BigInt(userId),
+          payload: payment.invoice_payload,
+          stars: payment.total_amount,
+          chargeId: payment.telegram_payment_charge_id,
+        });
+
+        // null означает, что платёж уже был обработан раньше —
+        // Telegram изредка присылает подтверждение повторно
+        if (!result) return;
+
+        await ctx.reply(MESSAGES.PREMIUM_ACTIVATED(result.until), {
+          parse_mode: 'HTML',
+        });
+
+        this.logger.log(
+          `💎 Оплата: ${userId} → ${payment.total_amount} ⭐ за ${result.plan.title}`,
+        );
+      } catch (error: any) {
+        this.logger.error(`❌ Обработка платежа ${userId}: ${error.message}`);
+        // Деньги списаны — человек не должен остаться без ответа
+        await ctx.reply(
+          '⚠️ Платёж получен, но при активации произошла ошибка.\n\n' +
+            'Напиши администратору @Saidolimxoja — разберёмся и вернём звёзды.',
+        );
+      }
+    });
+
+    // ==================== РЕФЕРАЛЫ ====================
+
+    bot.command('ref', async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId || ctx.chat?.type !== 'private') return;
+
+      const stats = await this.referralService.getStats(BigInt(userId));
+
+      await ctx.reply(MESSAGES.REFERRAL(stats.link, stats.count), {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+      });
     });
 
     bot.command('help', async (ctx) => {
@@ -466,12 +593,7 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      const hasSubscription = await this.subscriptionService.checkAll(
-        userId,
-        bot,
-      );
-
-      if (!hasSubscription) {
+      if (!(await this.hasAccess(userId, bot))) {
         await ctx.reply(MESSAGES.SUBSCRIBE_REQUIRED, {
           reply_markup:
             await this.subscriptionService.getSubscriptionKeyboard(),
@@ -526,7 +648,13 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
       this.runHandle = run(bot, {
         runner: {
           fetch: {
-            allowed_updates: ['message', 'callback_query'],
+            // pre_checkout_query обязателен: без него Telegram не пришлёт
+            // запрос подтверждения, и ни один платёж звёздами не пройдёт
+            allowed_updates: [
+              'message',
+              'callback_query',
+              'pre_checkout_query',
+            ],
           },
         },
         sink: {
@@ -556,6 +684,22 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
 
   private botUsername(): string {
     return this.config.get<string>('YOUR_USERNAME') || '@your_bot';
+  }
+
+  /**
+   * 🔑 Может ли пользователь пользоваться ботом.
+   *
+   * Обязательная подписка на каналы — плата за бесплатное использование.
+   * Тот, кто оформил премиум, уже заплатил деньгами, и требовать с него
+   * ещё и подписки означало бы продавать услугу, которую не оказываешь.
+   */
+  private async hasAccess(
+    userId: number,
+    bot: ReturnType<BotService['getBot']>,
+  ): Promise<boolean> {
+    if (await this.premiumService.isPremium(BigInt(userId))) return true;
+
+    return this.subscriptionService.checkAll(userId, bot);
   }
 
   /**

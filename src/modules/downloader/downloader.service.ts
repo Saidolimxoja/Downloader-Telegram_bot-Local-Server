@@ -18,6 +18,7 @@ import {
   DOWNLOAD_QUEUE,
   DownloadJobData,
 } from './interfaces/download-job.interface';
+import { PremiumService } from '../premium/premium.service';
 import { isSupportedUrl } from '../../common/constants/platform.constant';
 import { formatFileSize } from '../../common/utils/file.utils';
 import {
@@ -27,6 +28,13 @@ import {
   formatNumber,
   formatUploadDate,
 } from '../../common/utils/format.utils';
+
+/**
+ * Приоритеты BullMQ: меньше число — раньше обработка.
+ * Проставляются всем задачам явно, чтобы порядок был предсказуем.
+ */
+export const PRIORITY_PREMIUM = 1;
+export const PRIORITY_REGULAR = 5;
 
 /**
  * 🎬 ПРИЁМ ЗАПРОСОВ ОТ ПОЛЬЗОВАТЕЛЯ
@@ -53,6 +61,7 @@ export class DownloaderService {
     private readonly videoSessionService: VideoSessionService,
     private readonly rateLimitService: RateLimitService,
     private readonly media: MediaDeliveryService,
+    private readonly premiumService: PremiumService,
     config: ConfigService,
   ) {
     this.maxQueueSize = config.get<number>('MAX_QUEUE_SIZE') ?? 500;
@@ -112,6 +121,7 @@ export class DownloaderService {
         attempts: 1,
         removeOnComplete: true,
         removeOnFail: 100,
+        priority: await this.resolvePriority(userId),
       });
 
       if (userId > 0n) {
@@ -215,7 +225,21 @@ export class DownloaderService {
       removeOnComplete: true,
       // Провалившиеся задачи раньше копились в Redis без ограничений
       removeOnFail: 500,
+      priority: await this.resolvePriority(userId),
     });
+  }
+
+  /**
+   * 💎 Приоритет задачи в очереди: платящие обслуживаются первыми.
+   *
+   * Приоритет проставляется ВСЕМ задачам явно, а не только премиальным:
+   * в BullMQ задачи без приоритета и с приоритетом живут в разных структурах,
+   * и смешивать их — значит получить неочевидный порядок обработки.
+   */
+  async resolvePriority(userId: bigint): Promise<number> {
+    return (await this.premiumService.isPremium(userId))
+      ? PRIORITY_PREMIUM
+      : PRIORITY_REGULAR;
   }
 
   /**
