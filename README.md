@@ -474,6 +474,20 @@ npm run lint               # Проверка кода
 
 ## 🔄 Обновление на сервере
 
+> 📘 Подробная памятка по серверу — настройка systemd для telegram-bot-api,
+> уборка диска, что происходит с базой при миграциях и откат — в
+> [DEPLOY.md](DEPLOY.md).
+
+```bash
+cd ~/Downloader-Telegram_bot-Local-Server
+git pull
+docker compose exec -T postgres pg_dump -U postgres bot_db > ~/backup_$(date +%F).sql
+docker compose --profile public up -d --build
+docker compose logs -f bot
+```
+
+### Старый вариант
+
 ```bash
 # Перейди в папку проекта
 cd ~/Downloader-Telegram_bot-Local-Server

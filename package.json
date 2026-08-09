@@ -24,7 +24,10 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "docker:rebuild": "docker compose down && docker compose build --no-cache && docker compose up -d"
+    "docker:up": "docker compose --profile public up -d --build",
+    "docker:down": "docker compose --profile public down",
+    "docker:logs": "docker compose logs -f bot worker",
+    "docker:rebuild": "docker compose --profile public down && docker compose --profile public build --no-cache && docker compose --profile public up -d"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",

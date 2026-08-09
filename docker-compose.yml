@@ -171,9 +171,11 @@ services:
       - caddy_config:/config
       - caddy_logs:/var/log/caddy
     environment:
-      # Домен для сертификата. Без него Caddy не поднимется —
-      # это осознанно: молча работать по HTTP он не должен.
-      DOMAIN: ${DOMAIN:?укажите DOMAIN в .env, например saidolimxoja.uz}
+      # Домен для выпуска сертификата — задаётся в .env.
+      # Значение по умолчанию намеренно безобидное: обязательная проверка
+      # (${DOMAIN:?...}) ломала бы ЛЮБУЮ команду docker compose, даже когда
+      # профиль public не используется — compose разбирает весь файл целиком.
+      DOMAIN: ${DOMAIN:-localhost}
     networks:
       - bot-network
 

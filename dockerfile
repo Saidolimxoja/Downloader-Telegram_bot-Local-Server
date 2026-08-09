@@ -63,8 +63,14 @@ ENTRYPOINT ["/sbin/tini", "--"]
 
 # Миграции применяет только процесс роли bot: он существует в единственном
 # экземпляре. Пять воркеров, одновременно накатывающих миграции, — это гонка.
+#
+# Раньше здесь была ещё проверка NODE_ENV=production, и на сервере с
+# NODE_ENV=development миграции молча не применялись: приложение стартовало,
+# а колонок в базе не было. `migrate deploy` идемпотентен — он применяет
+# только неприменённое, — поэтому гонять его всегда безопаснее, чем гадать,
+# та ли переменная выставлена.
 CMD sh -c '\
-  if [ "$ROLE" != "worker" ] && [ "$NODE_ENV" = "production" ]; then \
-    DATABASE_URL="${DIRECT_URL:-$DATABASE_URL}" npx prisma migrate deploy; \
+  if [ "$ROLE" != "worker" ]; then \
+    DATABASE_URL="${DIRECT_URL:-$DATABASE_URL}" npx prisma migrate deploy || exit 1; \
   fi && \
   node dist/main'
