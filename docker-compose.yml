@@ -179,6 +179,50 @@ services:
     networks:
       - bot-network
 
+  # ============================================================
+  #  CLOUDFLARE TUNNEL — публичный HTTPS без белого IP.
+  #  Профиль tunnel:
+  #    docker compose --profile tunnel up -d
+  #
+  #  Для домашнего или офисного компьютера за NAT, где нет доступа к
+  #  роутеру. cloudflared сам устанавливает исходящее соединение с
+  #  Cloudflare — проброс портов и открытые 80/443 не нужны.
+  #
+  #  Профили public и tunnel взаимоисключающие: либо свой сертификат
+  #  на своём IP, либо туннель. Одновременно включать не нужно.
+  # ============================================================
+
+  # Фильтр маршрутов перед туннелем. Порты наружу не публикуются —
+  # контейнер виден только внутри сети docker.
+  edge:
+    image: caddy:2-alpine
+    container_name: bot_edge
+    profiles: ["tunnel"]
+    restart: always
+    depends_on:
+      - bot
+    volumes:
+      - ./Caddyfile.tunnel:/etc/caddy/Caddyfile:ro
+    networks:
+      - bot-network
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: bot_cloudflared
+    profiles: ["tunnel"]
+    restart: always
+    depends_on:
+      - edge
+    # --no-autoupdate: обновление образа — задача docker, а не процесса
+    # внутри контейнера, который при этом молча перезапускается
+    command: tunnel --no-autoupdate run
+    environment:
+      # Токен туннеля из панели Cloudflare Zero Trust. Секрет — держите
+      # его в .env, файл не попадает в git.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks:
+      - bot-network
+
 volumes:
   postgres_data:
   redis_data:

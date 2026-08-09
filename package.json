@@ -27,7 +27,10 @@
     "docker:up": "docker compose --profile public up -d --build",
     "docker:down": "docker compose --profile public down",
     "docker:logs": "docker compose logs -f bot worker",
-    "docker:rebuild": "docker compose --profile public down && docker compose --profile public build --no-cache && docker compose --profile public up -d"
+    "docker:rebuild": "docker compose --profile public down && docker compose --profile public build --no-cache && docker compose --profile public up -d",
+    "tunnel:up": "docker compose --profile tunnel up -d --build",
+    "tunnel:down": "docker compose --profile tunnel down",
+    "tunnel:logs": "docker compose logs -f cloudflared edge"
   },
   "dependencies": {
     "@grammyjs/auto-retry": "^2.0.2",
