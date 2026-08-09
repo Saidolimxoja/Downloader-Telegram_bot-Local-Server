@@ -497,6 +497,9 @@ npm run lint               # Проверка кода
 > 📘 Подробная памятка по серверу — настройка systemd для telegram-bot-api,
 > уборка диска, что происходит с базой при миграциях и откат — в
 > [DEPLOY.md](DEPLOY.md).
+>
+> 💻 Запуск на обычном компьютере за NAT (Windows + Cloudflare Tunnel),
+> команда за командой с нуля — в [RUNBOOK.md](RUNBOOK.md).
 
 ```bash
 cd ~/Downloader-Telegram_bot-Local-Server
