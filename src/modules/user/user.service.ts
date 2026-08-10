@@ -115,6 +115,22 @@ export class UserService {
   }
 
   /**
+   * ID всех администраторов.
+   *
+   * Нужен на старте бота, чтобы разослать им расширенное меню команд через
+   * scope: { type: 'chat' }. Админов единицы, поэтому берём разом и без кеша —
+   * запрос выполняется один раз за жизнь процесса.
+   */
+  async findAdminIds(): Promise<bigint[]> {
+    const admins = await this.prisma.user.findMany({
+      where: { isAdmin: true },
+      select: { id: true },
+    });
+
+    return admins.map((admin) => admin.id);
+  }
+
+  /**
    * Увеличить счётчик загрузок.
    *
    * Пользователь мог не существовать (прислал ссылку в группе, ни разу не

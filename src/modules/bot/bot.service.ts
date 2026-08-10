@@ -8,8 +8,30 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Bot, Context } from 'grammy';
+import type { BotCommand, BotCommandScope } from 'grammy/types';
 import { TELEGRAM_BOT } from '../telegram/telegram.module';
 import { getRole, isBotRole } from '../../config/role';
+
+/**
+ * Публичное меню команд.
+ *
+ * Служебных команд (/admin, /checkchannels, /refund) здесь нет намеренно.
+ * Скрыть их персонально нельзя без учёта состояния: scope: { type: 'chat' }
+ * живёт на серверах Telegram, пока его явно не удалят, а права админа
+ * меняются напрямую в базе — приложение об этом не узнаёт и не смогло бы
+ * снять меню у разжалованного.
+ *
+ * Поэтому меню одно для всех, а доступ решает не оно: каждый админский
+ * хендлер и так проверяет isAdmin по базе на каждом вызове (bot.update.ts).
+ * Админы вводят команду руками — она работает.
+ */
+const PUBLIC_COMMANDS: BotCommand[] = [
+  { command: 'start', description: 'Запуск бота' },
+  { command: 'premium', description: '💎 Премиум — без рекламы и лимитов' },
+  { command: 'ref', description: '🎁 Пригласить друзей' },
+  { command: 'help', description: 'Помощь' },
+  { command: 'channelid', description: 'Получить ID чата' },
+];
 
 @Injectable()
 export class BotService implements OnModuleInit, OnModuleDestroy {
@@ -35,23 +57,43 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       const me = await this.bot.api.getMe();
       this.logger.log(`✅ Бот: @${me.username} (ID: ${me.id})`);
 
-      await this.bot.api.setMyCommands([
-        { command: 'start', description: 'Запуск бота' },
-        {
-          command: 'premium',
-          description: '💎 Премиум — без рекламы и лимитов',
-        },
-        { command: 'ref', description: '🎁 Пригласить друзей' },
-        { command: 'help', description: 'Помощь' },
-        { command: 'channelid', description: 'Получить ID чата' },
-        { command: 'checkchannels', description: 'Проверка каналов (админ)' },
-        { command: 'admin', description: 'Админ-панель (админ)' },
-      ]);
-
-      this.logger.log('✅ Команды установлены');
+      await this.registerCommands();
     } catch (error: any) {
       this.handleError(error);
     }
+  }
+
+  /**
+   * Меню команд.
+   *
+   * Telegram хранит не один список, а дерево scope'ов с приоритетом
+   * chat → chat_member → all_private_chats → default, и внутри каждого — ещё
+   * разбивку по language_code. Клиент показывает самый специфичный непустой
+   * список. Поэтому просто записать новый набор в default мало: старый список
+   * в all_private_chats или в языковой версии продолжит его перекрывать —
+   * ровно из-за этого правки через BotFather «не применялись».
+   *
+   * Отсюда порядок: сначала снести все варианты, где мог осесть старый набор,
+   * и только потом записать актуальный.
+   */
+  private async registerCommands() {
+    const scopes: BotCommandScope[] = [
+      { type: 'default' },
+      { type: 'all_private_chats' },
+    ];
+
+    // Пустой language_code — базовый список, 'ru' и 'en' задавались раньше кодом
+    for (const scope of scopes) {
+      for (const language_code of [undefined, 'ru', 'en'] as const) {
+        await this.bot.api.deleteMyCommands({ scope, language_code });
+      }
+    }
+
+    for (const scope of scopes) {
+      await this.bot.api.setMyCommands(PUBLIC_COMMANDS, { scope });
+    }
+
+    this.logger.log(`✅ Команды установлены (${PUBLIC_COMMANDS.length} шт.)`);
   }
 
   private handleError(error: any) {
