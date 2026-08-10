@@ -300,14 +300,10 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
           await this.referralService.register(BigInt(userId), referrerId);
         }
 
-        if (!(await this.hasAccess(userId, bot))) {
-          await ctx.reply(MESSAGES.SUBSCRIBE_REQUIRED, {
-            reply_markup:
-              await this.subscriptionService.getSubscriptionKeyboard(),
-          });
-          return;
-        }
-
+        // Подписку на /start НЕ спрашиваем. Требование «подпишись» до того,
+        // как человек увидел, что бот вообще умеет, отсекает часть новичков
+        // ещё на входе. Стена стоит там, где начинается польза, — на первой
+        // отправленной ссылке (см. handleTextMessage).
         await ctx.reply(MESSAGES.START, { parse_mode: 'Markdown' });
       } catch (error: any) {
         this.logger.error(`❌ /start: ${error.message}`);
@@ -439,6 +435,24 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
       await ctx.deleteMessage().catch(() => {});
       await ctx.reply(MESSAGES.START, { parse_mode: 'Markdown' });
     });
+
+    // 🚪 ВЫХОД ИЗ КАНАЛА
+    //
+    // Результат проверки подписки лежит в Redis пять минут — иначе каждая
+    // присланная ссылка означала бы обращение к Telegram API по каждому
+    // обязательному каналу. Обратная сторона: подписался, прошёл проверку,
+    // отписался — и до конца этих пяти минут бот продолжал работать.
+    //
+    // Telegram сам сообщает о выходе из канала, где бот админ. Сбрасываем
+    // кеш этого человека, и следующая же ссылка упрётся в реальную проверку.
+    bot.on('chat_member', async (ctx) => {
+      const status = ctx.chatMember.new_chat_member.status;
+      if (status !== 'left' && status !== 'kicked') return;
+
+      const userId = ctx.chatMember.new_chat_member.user.id;
+      await this.subscriptionService.invalidateUser(userId);
+      this.logger.debug(`🚪 Выход из ${ctx.chat.id}: сброшен кеш ${userId}`);
+    });
   }
 
   // ==================== ЗАГРУЗКА ====================
@@ -449,6 +463,21 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
 
       if (!sessionId || !formatId || !resolution) {
         await ctx.answerCallbackQuery({ text: '❌ Некорректная кнопка' });
+        return;
+      }
+
+      // Подписку проверяем и здесь: между отправкой ссылки и выбором
+      // качества человек мог выйти из канала. Кнопки сессии живут сутки —
+      // без этой проверки одной подписки хватало бы, чтобы качать дальше.
+      const userId = ctx.from?.id;
+      if (userId && !(await this.hasAccess(userId, bot))) {
+        await ctx.answerCallbackQuery({
+          text: MESSAGES.SUBSCRIBE_FAILED,
+          show_alert: true,
+        });
+        await ctx.reply(MESSAGES.SUBSCRIBE_REQUIRED, {
+          reply_markup: await this.subscriptionService.getSubscriptionKeyboard(),
+        });
         return;
       }
 
@@ -650,10 +679,15 @@ export class BotUpdate implements OnModuleInit, OnModuleDestroy {
           fetch: {
             // pre_checkout_query обязателен: без него Telegram не пришлёт
             // запрос подтверждения, и ни один платёж звёздами не пройдёт
+            // chat_member: Telegram присылает его, когда человек вступает
+            // в канал или выходит из него. Без этого типа (он не входит
+            // в набор по умолчанию) об отписке мы узнаём только когда
+            // протухнет кеш проверки — до пяти минут бесплатной работы.
             allowed_updates: [
               'message',
               'callback_query',
               'pre_checkout_query',
+              'chat_member',
             ],
           },
         },

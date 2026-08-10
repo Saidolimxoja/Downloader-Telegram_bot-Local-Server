@@ -69,8 +69,13 @@ ENTRYPOINT ["/sbin/tini", "--"]
 # а колонок в базе не было. `migrate deploy` идемпотентен — он применяет
 # только неприменённое, — поэтому гонять его всегда безопаснее, чем гадать,
 # та ли переменная выставлена.
+#
+# npx --no запрещает скачивание из сети: prisma должен лежать в образе
+# (он в dependencies, а не в devDependencies, иначе npm prune вырезал бы
+# его — и npx молча тянул бы с реестра последнюю мажорную версию, которая
+# схему шестой версии уже не понимает).
 CMD sh -c '\
   if [ "$ROLE" != "worker" ]; then \
-    DATABASE_URL="${DIRECT_URL:-$DATABASE_URL}" npx prisma migrate deploy || exit 1; \
+    DATABASE_URL="${DIRECT_URL:-$DATABASE_URL}" npx --no prisma migrate deploy || exit 1; \
   fi && \
   node dist/main'

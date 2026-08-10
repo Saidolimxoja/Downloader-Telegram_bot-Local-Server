@@ -1,20 +1,28 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import { existsSync } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { VideoInfoDto, FormatDto } from '../downloader/dto/video-info.dto';
 
 const execFileAsync = promisify(execFile);
 
 @Injectable()
-export class YtdlpService {
+export class YtdlpService implements OnModuleInit {
   private readonly logger = new Logger(YtdlpService.name);
   private readonly ytdlpPath: string;
   private readonly cookiesPath: string;
   private readonly analyzeTimeoutMs: number;
   private readonly downloadTimeoutMs: number;
+
+  /**
+   * Путь к кукам, который реально передаётся в yt-dlp: writable-копия
+   * исходного файла. null — кук нет, работаем без них. См. prepareCookies().
+   */
+  private cookiesArg: string | null = null;
 
   constructor(private config: ConfigService) {
     this.ytdlpPath = this.config.get<string>('YTDLP_PATH') || 'yt-dlp';
@@ -28,6 +36,44 @@ export class YtdlpService {
       this.config.get<number>('YTDLP_ANALYZE_TIMEOUT_MS') ?? 30_000;
     this.downloadTimeoutMs =
       this.config.get<number>('YTDLP_DOWNLOAD_TIMEOUT_MS') ?? 10 * 60 * 1000;
+  }
+
+  onModuleInit() {
+    this.prepareCookies();
+  }
+
+  /**
+   * 0️⃣ ПОДГОТОВКА КУК
+   *
+   * yt-dlp в конце каждого запуска ПЕРЕЗАПИСЫВАЕТ cookie-файл (save_cookies()
+   * в YoutubeDL.close()) — сохраняет обновлённые сессионные куки. А файл
+   * примонтирован в контейнер как :ro, поэтому запуск падал с
+   * `OSError: [Errno 30] Read-only file system` уже ПОСЛЕ выдачи JSON:
+   * stdout корректный, но код возврата 1 — и execFile отбрасывал результат.
+   * Ломался анализ любой ссылки, не только Instagram.
+   *
+   * Поэтому отдаём yt-dlp одноразовую копию во временном каталоге: исходный
+   * файл остаётся неприкосновенным, а копия у каждого процесса своя — два
+   * воркера не портят куки друг другу параллельной записью.
+   */
+  private prepareCookies(): void {
+    if (!existsSync(this.cookiesPath)) {
+      this.logger.warn(`⚠️ Куки не найдены: ${this.cookiesPath}`);
+      return;
+    }
+
+    try {
+      const dest = path.join(os.tmpdir(), `ytdlp-cookies-${process.pid}.txt`);
+      fs.copyFileSync(this.cookiesPath, dest);
+      this.cookiesArg = dest;
+      this.logger.log(`🍪 Куки скопированы для yt-dlp: ${dest}`);
+    } catch (error: any) {
+      // Работаем без кук: публичные ссылки скачаются, приватные — нет.
+      // Это лучше, чем падать на каждом запросе.
+      this.logger.error(
+        `❌ Не удалось подготовить куки (${error.message}) — работаю без них`,
+      );
+    }
   }
 
   /**
@@ -46,9 +92,8 @@ export class YtdlpService {
         url,
       ];
 
-      if (existsSync(this.cookiesPath)) {
-        this.logger.debug(`🍪 Куки найдены: ${this.cookiesPath}`);
-        args.unshift('--cookies', this.cookiesPath);
+      if (this.cookiesArg) {
+        args.unshift('--cookies', this.cookiesArg);
       }
 
       // ⚠️ execFile (не exec) — аргументы передаются массивом, без интерпретации
@@ -167,9 +212,29 @@ export class YtdlpService {
       // Пробрасываем реальный текст ошибки yt-dlp, чтобы вызывающий код мог
       // показать понятное сообщение (приватное видео, возрастное ограничение и т.д.)
       const details: string = error.stderr || error.message || '';
-      this.logger.error(`❌ Ошибка getVideoInfo: ${details.substring(0, 500)}`);
+      this.logger.error(`❌ Ошибка getVideoInfo: ${this.explainError(details)}`);
       throw new Error(details || 'Видео недоступно или ссылка неверна.');
     }
+  }
+
+  /**
+   * 1.4️⃣ СУТЬ ОШИБКИ yt-dlp ДЛЯ ЛОГА
+   *
+   * Раньше в лог уходили первые 500 символов stderr. У Python-traceback это
+   * всегда «Traceback (most recent call last)» и шапка вызовов, а настоящая
+   * причина — в последней строке, и она обрезалась. Ищем строку yt-dlp
+   * «ERROR: ...», а если её нет (упало исключением) — берём хвост.
+   */
+  private explainError(stderr: string): string {
+    const lines = stderr
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const explicit = lines.find((l) => l.startsWith('ERROR:'));
+    const cause = explicit || lines[lines.length - 1] || 'нет вывода';
+
+    return cause.substring(0, 500);
   }
 
   /**
@@ -300,8 +365,8 @@ export class YtdlpService {
         '%(progress._percent_str)s',
       ];
 
-      if (existsSync(this.cookiesPath)) {
-        args.push('--cookies', this.cookiesPath);
+      if (this.cookiesArg) {
+        args.push('--cookies', this.cookiesArg);
       }
 
       if (isAudio) {
