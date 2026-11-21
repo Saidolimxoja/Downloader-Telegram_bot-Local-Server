@@ -198,25 +198,6 @@ export class CacheService {
   }
 
   /**
-   * Очистить давно не используемые записи
-   */
-  async cleanOldCache(daysOld = 30): Promise<number> {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
-
-    const result = await this.prisma.cachedFile.deleteMany({
-      where: { lastAccessedAt: { lt: cutoffDate } },
-    });
-
-    // Память чистим целиком: выяснять, какие именно ключи удалились,
-    // дороже, чем один раз прогреть кеш заново
-    if (result.count > 0) this.memoryCache.clear();
-
-    this.logger.log(`🗑️ Удалено ${result.count} старых записей`);
-    return result.count;
-  }
-
-  /**
    * Обновление счётчиков в фоне — пользователь не ждёт этот запрос
    */
   private updateCacheStatsAsync(cachedFileId: number): void {

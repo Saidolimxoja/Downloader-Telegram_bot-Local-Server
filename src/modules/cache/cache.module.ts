@@ -2,11 +2,11 @@
 
 import { Module, Provider } from '@nestjs/common';
 import { CacheService } from './cache.service';
-import { CacheCleanupService } from './cache-cleanup.service';
+import { CacheStatsService } from './cache-stats.service';
 import { isCronRole } from '../../config/role';
 
-// Ночная чистка кеша должна выполняться один раз, а не в каждой реплике воркера
-const cronProviders: Provider[] = isCronRole() ? [CacheCleanupService] : [];
+// Еженедельная статистика кеша должна логироваться один раз, а не в каждой реплике воркера
+const cronProviders: Provider[] = isCronRole() ? [CacheStatsService] : [];
 
 @Module({
   providers: [CacheService, ...cronProviders],
