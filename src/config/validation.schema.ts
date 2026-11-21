@@ -24,7 +24,9 @@ export const validationSchema = Joi.object({
   // Нужен только для подсчёта переходов по рекламе: кнопка объявления ведёт
   // через него, чтобы зафиксировать клик. Без него отслеживание отключается,
   // а кнопки ведут напрямую к рекламодателю.
-  PUBLIC_URL: Joi.string().uri().optional(),
+  // Пустая строка разрешена: docker-compose передаёт `${PUBLIC_URL:-}`,
+  // то есть пустую строку, когда переменная не задана.
+  PUBLIC_URL: Joi.string().uri().allow('').optional(),
 
   // ===== База данных =====
   DATABASE_URL: Joi.string().required(),
